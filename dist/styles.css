@@ -1,5 +1,8 @@
 /* ── Feedback widget ─────────────────────────────────────────────── */
-.kids-feedback-root { position: fixed; right: 22px; bottom: 22px; z-index: 990; } /* below antd modals/drawers (1000+) */
+/* Portaled to <body>. Above antd Modal/Drawer and their masks (1000; nested 1100) so
+   Report works while one is open; below the report modal (1160), annotator (1170) and
+   the recording pill (1200). FeedbackWidget moves it off any overlay panel it would cover. */
+.kids-feedback-root { position: fixed; right: 22px; bottom: 22px; z-index: 1150; transition: right .2s ease, bottom .2s ease; }
 
 .kids-feedback-fab {
   display: inline-flex; align-items: center; gap: 8px;
@@ -76,6 +79,12 @@
 .kf-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 20px 16px; border-top: 1px solid #f1f5f9; background: #fff; }
 .kf-included { font-size: 12px; color: #64748b; }
 .kf-included a { color: #6366f1; }
+.kf-footer { flex-wrap: wrap; }
+.kf-error { flex: 1 0 100%; border-radius: 8px; }
+.kf-sep { margin: 0 6px; color: #cbd5e1; }
+.kf-link { border: none; background: none; padding: 0; font: inherit; font-size: 12px; color: #64748b; text-decoration: underline; cursor: pointer; }
+.kf-link:hover { color: #6366f1; }
+.kf-copy { box-sizing: border-box; width: 100%; min-height: 140px; font: 11.5px ui-monospace, monospace; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; resize: vertical; }
 
 .kf-success { padding: 36px 24px; text-align: center; display: grid; gap: 10px; justify-items: center; }
 .kf-success .key { font: 700 22px 'Inter', sans-serif; color: #0f172a; }

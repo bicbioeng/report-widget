@@ -35,10 +35,17 @@ __export(src_exports, {
   KIND_LABELS: () => KIND_LABELS,
   MyReports: () => MyReports,
   OPEN_EVENT: () => OPEN_EVENT,
+  REPORT_TOOL_KIND: () => REPORT_TOOL_KIND,
+  REPORT_TOOL_PREFIX: () => REPORT_TOOL_PREFIX,
   ReportProvider: () => ReportProvider,
   RouteRecorder: () => RouteRecorder,
   STATE_COLORS: () => STATE_COLORS,
   STATE_LABELS: () => STATE_LABELS,
+  WIDGET_VERSION: () => WIDGET_VERSION,
+  buildDiagnostics: () => buildDiagnostics,
+  buildReportToolPayload: () => buildReportToolPayload,
+  clipText: () => clipText,
+  errorRecord: () => errorRecord,
   installContextBuffer: () => installContextBuffer,
   installHistoryTracking: () => installHistoryTracking,
   lastUncaught: () => lastUncaught,
@@ -55,6 +62,7 @@ module.exports = __toCommonJS(src_exports);
 
 // src/FeedbackWidget.jsx
 var import_react7 = __toESM(require("react"), 1);
+var import_react_dom = require("react-dom");
 var import_antd5 = require("antd");
 var import_icons4 = require("@ant-design/icons");
 
@@ -318,7 +326,7 @@ function useMediaRecorder({ kind = "audio", maxMs = 5 * 60 * 1e3, captions = fal
     recorderRef.current = null;
   }, []);
   (0, import_react2.useEffect)(() => cleanup, [cleanup]);
-  const stop = (0, import_react2.useCallback)(() => {
+  const stop2 = (0, import_react2.useCallback)(() => {
     const rec = recorderRef.current;
     if (!rec || rec.state === "inactive") return;
     setStatus("processing");
@@ -373,7 +381,7 @@ function useMediaRecorder({ kind = "audio", maxMs = 5 * 60 * 1e3, captions = fal
         setStatus("idle");
       };
       stream.getVideoTracks().forEach((t) => {
-        t.onended = () => stop();
+        t.onended = () => stop2();
       });
       startedAtRef.current = Date.now();
       rec.start(1e3);
@@ -382,7 +390,7 @@ function useMediaRecorder({ kind = "audio", maxMs = 5 * 60 * 1e3, captions = fal
       timerRef.current = setInterval(() => {
         const ms = Date.now() - startedAtRef.current;
         setElapsedMs(ms);
-        if (ms >= maxMs) stop();
+        if (ms >= maxMs) stop2();
       }, 250);
       if (kind === "audio") {
         try {
@@ -446,14 +454,14 @@ function useMediaRecorder({ kind = "audio", maxMs = 5 * 60 * 1e3, captions = fal
       const denied = (err == null ? void 0 : err.name) === "NotAllowedError" || (err == null ? void 0 : err.name) === "SecurityError";
       setError(denied ? kind === "screen" ? "Screen recording was cancelled." : "Microphone access was denied. Allow it in the browser and try again." : (err == null ? void 0 : err.message) || "Could not start recording.");
     }
-  }, [kind, maxMs, captions, cleanup, stop]);
+  }, [kind, maxMs, captions, cleanup, stop2]);
   const reset = (0, import_react2.useCallback)(() => {
     setResult(null);
     setError(null);
     setElapsedMs(0);
     setLiveCaption("");
   }, []);
-  return { status, start, stop, reset, elapsedMs, error, result, liveCaption, level };
+  return { status, start, stop: stop2, reset, elapsedMs, error, result, liveCaption, level };
 }
 function formatMs(ms) {
   const s = Math.floor(ms / 1e3);
@@ -691,7 +699,7 @@ var import_jsx_runtime4 = require("react/jsx-runtime");
 var { Text: Text2 } = import_antd3.Typography;
 var STATE_COLORS = { new: "blue", acknowledged: "geekblue", in_progress: "gold", done: "green", dismissed: "default" };
 var STATE_LABELS = { new: "New", acknowledged: "Acknowledged", in_progress: "In progress", done: "Done", dismissed: "Dismissed" };
-var KIND_LABELS = { bug: "Bug", idea: "Idea", question: "Question" };
+var KIND_LABELS = { bug: "Bug", idea: "Idea", question: "Question", "report-tool": "Report tool" };
 function relTime(iso) {
   const d = new Date(iso);
   const s = Math.round((Date.now() - d.getTime()) / 1e3);
@@ -869,6 +877,83 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
   };
 }
 
+// src/diagnostics.js
+var WIDGET_VERSION = "1.1.0";
+var REPORT_TOOL_KIND = "report-tool";
+var REPORT_TOOL_PREFIX = "Report tool: ";
+var MAX_TEXT = 280;
+var MAX_STACK = 2e3;
+function clipText(v, max = MAX_TEXT) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  return s.length > max ? `${s.slice(0, max)}\u2026 (+${s.length - max} chars)` : s;
+}
+function errorRecord(stage, e) {
+  var _a;
+  if (!e) return null;
+  return {
+    stage: stage || null,
+    message: clipText((_a = e.message) != null ? _a : e, 600),
+    stack: typeof e.stack === "string" ? e.stack.slice(0, MAX_STACK) : null
+  };
+}
+function buildDiagnostics({
+  state: state2,
+  progress,
+  lastError,
+  failedAttachments,
+  browser,
+  viewport,
+  form = {},
+  now = /* @__PURE__ */ new Date()
+} = {}) {
+  var _a, _b;
+  const f = form;
+  return {
+    widgetVersion: WIDGET_VERSION,
+    state: state2 || "unknown",
+    progress: progress || null,
+    lastError: lastError || null,
+    form: {
+      kind: f.kind || null,
+      severity: f.kind === "bug" ? f.severity || null : null,
+      summary: clipText(f.summary),
+      expected: clipText(f.expected),
+      steps: clipText(f.steps),
+      transcript: clipText(f.transcript),
+      screenshot: f.shot ? { method: f.shot.method || null, annotated: Boolean(f.shot.annotated) } : null,
+      voiceNote: f.voice ? { durationMs: (_a = f.voice.durationMs) != null ? _a : null, mimeType: f.voice.mimeType || null } : null,
+      screenRecording: f.screen ? { durationMs: (_b = f.screen.durationMs) != null ? _b : null, mimeType: f.screen.mimeType || null } : null,
+      files: (f.files || []).map((x) => {
+        var _a2;
+        return { name: x.name, type: x.type || null, size: (_a2 = x.size) != null ? _a2 : null };
+      })
+    },
+    failedAttachments: (failedAttachments || []).map((a) => ({ name: a.name, error: clipText(a.error, 300) })),
+    browser: browser || null,
+    viewport: viewport || null,
+    capturedAt: now.toISOString()
+  };
+}
+function buildReportToolPayload({ text, diagnostics, pageUrl = null, route = null, context = {} }) {
+  const said = String(text || "").trim();
+  return {
+    kind: REPORT_TOOL_KIND,
+    severity: null,
+    summary: `${REPORT_TOOL_PREFIX}${said || "(no description, see diagnostics)"}`.slice(0, 2e4),
+    expected: null,
+    steps: null,
+    transcript: null,
+    transcriptSource: null,
+    pageUrl,
+    route,
+    // Inside context (not top level): both adapters and the KIDS server keep
+    // `context` as-is, while unknown top-level fields are dropped.
+    context: { ...context, diagnostics }
+  };
+}
+
 // src/FeedbackModal.jsx
 var import_jsx_runtime5 = require("react/jsx-runtime");
 var { Text: Text3 } = import_antd4.Typography;
@@ -912,7 +997,12 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
   const [progress, setProgress] = (0, import_react6.useState)("");
   const [done, setDone] = (0, import_react6.useState)(null);
   const [refreshKey, setRefreshKey] = (0, import_react6.useState)(0);
+  const [lastError, setLastError] = (0, import_react6.useState)(null);
+  const [failedUploads, setFailedUploads] = (0, import_react6.useState)([]);
+  const [problem, setProblem] = (0, import_react6.useState)(null);
   const autoShotDone = (0, import_react6.useRef)(false);
+  const copyRef = (0, import_react6.useRef)(null);
+  const noteError = (stage, e) => setLastError(errorRecord(stage, e));
   const screenRec = useMediaRecorder({ kind: "screen", maxMs: 2 * 60 * 1e3 });
   (0, import_react6.useEffect)(() => {
     if (!open) return;
@@ -936,6 +1026,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
         if (alive && r.blob) setShot({ ...r, url: URL.createObjectURL(r.blob) });
       } catch (e) {
         console.warn("[feedback] quick capture failed:", e.message);
+        noteError("auto-screenshot", e);
       } finally {
         if (alive) setCapturing(false);
       }
@@ -955,6 +1046,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     if (screenRec.error) {
       setHidden(false);
       import_antd4.message.warning(screenRec.error);
+      noteError("screen-recording", screenRec.error);
     }
   }, [screenRec.error]);
   const reset = (0, import_react6.useCallback)(() => {
@@ -970,9 +1062,13 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     setFiles([]);
     setDone(null);
     setProgress("");
+    setLastError(null);
+    setFailedUploads([]);
+    setProblem(null);
     autoShotDone.current = false;
   }, [shot]);
   const handleClose = () => {
+    setProblem(null);
     onClose();
   };
   const retakeExact = async () => {
@@ -984,7 +1080,10 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
       if (shot == null ? void 0 : shot.url) URL.revokeObjectURL(shot.url);
       setShot({ ...r, url: URL.createObjectURL(r.blob) });
     } catch (e) {
-      if ((e == null ? void 0 : e.name) !== "NotAllowedError") import_antd4.message.warning(e.message || "Screenshot cancelled.");
+      if ((e == null ? void 0 : e.name) !== "NotAllowedError") {
+        import_antd4.message.warning(e.message || "Screenshot cancelled.");
+        noteError("exact-screenshot", e);
+      }
     } finally {
       setCapturing(false);
       setHidden(false);
@@ -1000,6 +1099,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
       setShot({ ...r, url: URL.createObjectURL(r.blob) });
     } catch (e) {
       import_antd4.message.warning(e.message || "Screenshot failed.");
+      noteError("screenshot", e);
     } finally {
       setCapturing(false);
       setHidden(false);
@@ -1033,6 +1133,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     setSubmitting(true);
     setProgress("Creating the ticket\u2026");
     const warnings = [];
+    const failed = [];
     try {
       const ctx = { ...meta(), ...snapshotContext() };
       const created = await transport.submitFeedback({
@@ -1058,18 +1159,84 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
           await transport.uploadFeedbackFile(created.ticketKey, uploads[i]);
         } catch (e) {
           warnings.push(`${uploads[i].name} could not be uploaded (${e.message}).`);
+          failed.push({ name: uploads[i].name, error: e.message });
+          noteError("upload", e);
         }
       }
       setProgress("Finishing\u2026");
-      await transport.finalizeFeedback(created.id).catch((e) => warnings.push(`Context comment failed (${e.message}).`));
+      await transport.finalizeFeedback(created.id).catch((e) => {
+        warnings.push(`Context comment failed (${e.message}).`);
+        noteError("finalize", e);
+      });
+      setFailedUploads(failed);
       setDone({ ticketKey: created.ticketKey, warnings });
       setRefreshKey((k) => k + 1);
     } catch (e) {
       setProgress("");
+      noteError("submit", e);
     } finally {
       setSubmitting(false);
     }
   };
+  const formState = () => {
+    if (tab === "mine") return "my-reports";
+    if (submitting) return "submitting";
+    if (done) return done.warnings.length ? "sent-with-warnings" : "sent";
+    if ((lastError == null ? void 0 : lastError.stage) === "submit") return "submit-failed";
+    if (screenRec.status === "recording") return "recording-screen";
+    if (capturing) return "capturing-screenshot";
+    return "editing";
+  };
+  const openProblem = () => {
+    const { browser, viewport } = meta();
+    setProblem({
+      text: "",
+      status: "editing",
+      diagnostics: buildDiagnostics({
+        state: formState(),
+        progress,
+        lastError,
+        failedAttachments: failedUploads,
+        browser,
+        viewport,
+        form: { kind, severity, summary, expected, steps, transcript: voice == null ? void 0 : voice.transcript, shot, voice, screen, files }
+      })
+    });
+  };
+  const sendProblem = async () => {
+    const payload = buildReportToolPayload({
+      text: problem.text,
+      diagnostics: problem.diagnostics,
+      pageUrl: window.location.href,
+      route: window.location.pathname,
+      context: { ...meta(), ...snapshotContext() }
+    });
+    setProblem((p) => ({ ...p, status: "sending" }));
+    try {
+      const created = await transport.submitFeedback(payload);
+      await transport.finalizeFeedback(created.id).catch((e) => {
+        if (!created.ticketKey) throw e;
+      });
+      setProblem((p) => ({ ...p, status: "sent", ticketKey: created.ticketKey }));
+    } catch (e) {
+      setProblem((p) => ({ ...p, status: "failed", error: (e == null ? void 0 : e.message) || String(e), copyText: JSON.stringify(payload, null, 2) }));
+    }
+  };
+  const copyProblem = () => {
+    var _a2;
+    const el = copyRef.current;
+    const fallback = () => {
+      el == null ? void 0 : el.focus();
+      el == null ? void 0 : el.select();
+      import_antd4.message.info("Selected. Press Ctrl+C (Cmd+C on a Mac) to copy.");
+    };
+    if (!((_a2 = navigator.clipboard) == null ? void 0 : _a2.writeText)) {
+      fallback();
+      return;
+    }
+    navigator.clipboard.writeText(problem.copyText).then(() => import_antd4.message.success("Copied the report and diagnostics."), fallback);
+  };
+  const problemLink = /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("button", { type: "button", className: "kf-link", onClick: openProblem, children: "Problem with this form?" });
   const transcriptionAvailable = Boolean((_a = config == null ? void 0 : config.transcription) == null ? void 0 : _a.available);
   const desktop = isDesktop();
   const includedPopover = /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { className: "kf-context", style: { maxWidth: 420 }, children: [
@@ -1093,6 +1260,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
       " is filed. You will be notified when it moves or gets a reply."
     ] }),
     done.warnings.map((w) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Alert, { type: "warning", showIcon: true, message: w, style: { borderRadius: 8, textAlign: "left" } }, w)),
+    done.warnings.length > 0 && problemLink,
     /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_antd4.Space, { children: [
       done.ticketKey && /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_antd4.Button, { type: "primary", onClick: () => {
         onOpenTicket == null ? void 0 : onOpenTicket(done.ticketKey);
@@ -1197,10 +1365,22 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     ] })
   ] });
   const footer = done ? null : /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { className: "kf-footer", children: [
+    (lastError == null ? void 0 : lastError.stage) === "submit" && !submitting && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+      import_antd4.Alert,
+      {
+        className: "kf-error",
+        type: "error",
+        showIcon: true,
+        message: `Your report was not sent: ${lastError.message || "unknown error"}. What you wrote is still here, so you can try again.`,
+        action: problemLink
+      }
+    ),
     /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("span", { className: "kf-included", children: [
       "We'll also include the page, your account, browser and recent errors.",
       " ",
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Popover, { content: includedPopover, title: "What gets included", trigger: "click", placement: "topLeft", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("a", { children: "view" }) })
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Popover, { content: includedPopover, title: "What gets included", trigger: "click", placement: "topLeft", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("a", { children: "view" }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { className: "kf-sep", children: "\xB7" }),
+      problemLink
     ] }),
     /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_antd4.Space, { children: [
       progress && /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(Text3, { type: "secondary", style: { fontSize: 12 }, children: [
@@ -1210,6 +1390,64 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Button, { onClick: handleClose, disabled: submitting, children: "Cancel" }),
       /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Button, { type: "primary", onClick: submit, disabled: !canSubmit, loading: submitting, children: "Send report" })
+    ] })
+  ] });
+  const problemView = problem && /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { className: "kf-body kf-problem", children: problem.status === "sent" ? /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { className: "kf-success", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_icons3.CheckCircleFilled, { style: { fontSize: 32, color: "#22c55e" } }),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(Text3, { children: [
+        "Thanks, the team will look at the form itself",
+        problem.ticketKey ? ` (${problem.ticketKey})` : "",
+        "."
+      ] })
+    ] }) : /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Text3, { type: "secondary", children: "Something wrong with this report form itself? Tell us what happened. The details below are attached automatically." }),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+        TextArea,
+        {
+          autoFocus: true,
+          value: problem.text,
+          onChange: (e) => {
+            const text = e.target.value;
+            setProblem((p) => ({ ...p, text }));
+          },
+          placeholder: "e.g. Send did nothing, or the screenshot never appeared",
+          autoSize: { minRows: 2, maxRows: 6 },
+          maxLength: 2e3,
+          disabled: problem.status === "sending"
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+        import_antd4.Collapse,
+        {
+          ghost: true,
+          size: "small",
+          items: [{
+            key: "diag",
+            label: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Text3, { type: "secondary", style: { fontSize: 12.5 }, children: "Diagnostics we'll attach" }),
+            children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { className: "kf-context", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("pre", { children: JSON.stringify(problem.diagnostics, null, 2) }) })
+          }]
+        }
+      ),
+      problem.status === "failed" && /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+          import_antd4.Alert,
+          {
+            type: "error",
+            showIcon: true,
+            message: `This could not be sent either (${problem.error}). Copy it and send it to the team another way.`,
+            action: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Button, { size: "small", onClick: copyProblem, children: "Copy" })
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("textarea", { ref: copyRef, className: "kf-copy", readOnly: true, value: problem.copyText, "aria-label": "Report and diagnostics to copy" })
+      ] })
+    ] }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { className: "kf-footer", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", {}),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_antd4.Space, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Button, { onClick: () => setProblem(null), disabled: problem.status === "sending", children: "Back to my report" }),
+        problem.status !== "sent" && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Button, { type: "primary", onClick: sendProblem, loading: problem.status === "sending", children: problem.status === "failed" ? "Try again" : "Send" })
+      ] })
     ] })
   ] });
   return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
@@ -1231,11 +1469,11 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { className: "kf-head", children: [
             /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h3", { children: "Report a bug or share an idea" }),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h3", { children: problem ? "Problem with this form" : "Report a bug or share an idea" }),
               /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { children: (config == null ? void 0 : config.project) ? `Goes straight to the ${appName} team as a ticket in ${config.project.name}.` : `Goes straight to the ${appName} team as a ticket.` })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_antd4.Space, { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+              !problem && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
                 import_antd4.Tabs,
                 {
                   size: "small",
@@ -1248,7 +1486,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
               /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Button, { type: "text", icon: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_icons3.CloseOutlined, {}), onClick: handleClose, "aria-label": "Close" })
             ] })
           ] }),
-          tab === "new" ? /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
+          problem ? problemView : tab === "new" ? /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
             form,
             footer
           ] }) : /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: { padding: "14px 20px 18px" }, children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MyReports, { refreshKey, onOpenTicket: (k) => {
@@ -1267,6 +1505,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
         width: 960,
         centered: true,
         destroyOnHidden: true,
+        wrapClassName: "kids-feedback-annotator-wrap",
         title: "Annotate the screenshot",
         maskClosable: false,
         zIndex: 1170,
@@ -1299,10 +1538,62 @@ var OPEN_EVENT = "kids:feedback:open";
 function openFeedback(prefill) {
   window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: prefill || null }));
 }
+var GAP = 22;
+var PANELS = ".ant-drawer-content-wrapper, .ant-modal-wrap:not(.kids-feedback-modal-wrap):not(.kids-feedback-annotator-wrap) .ant-modal-content";
+function useAvoidOverlays(ref) {
+  const [pos, setPos] = (0, import_react7.useState)(null);
+  (0, import_react7.useEffect)(() => {
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const el = ref.current;
+      if (!el) return;
+      const vw = document.documentElement.clientWidth;
+      const vh = document.documentElement.clientHeight;
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      let right = GAP;
+      let bottom = GAP;
+      const panels = Array.from(document.querySelectorAll(PANELS)).map((p) => p.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0);
+      for (let i = 0; i < panels.length; i += 1) {
+        const left = vw - right - w;
+        const top = vh - bottom - h;
+        const hit = panels.find((r) => r.left < left + w && r.right > left && r.top < top + h && r.bottom > top);
+        if (!hit) break;
+        if (vw - hit.left + GAP + w <= vw - 8) right = vw - hit.left + GAP;
+        else if (vh - hit.top + GAP + h <= vh - 8) bottom = vh - hit.top + GAP;
+        else break;
+      }
+      setPos((p) => p && p.right === right && p.bottom === bottom ? p : { right, bottom });
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(measure);
+    };
+    const mo = new MutationObserver(schedule);
+    mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"] });
+    window.addEventListener("resize", schedule);
+    window.addEventListener("scroll", schedule, true);
+    schedule();
+    return () => {
+      mo.disconnect();
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", schedule, true);
+      cancelAnimationFrame(frame);
+    };
+  }, [ref]);
+  return pos;
+}
+var stop = (e) => e.stopPropagation();
 function FeedbackWidget({ onOpenTicket, hideButton = false, config }) {
   const [open, setOpen] = (0, import_react7.useState)(false);
   const [hidden, setHidden] = (0, import_react7.useState)(false);
   const [prefill, setPrefill] = (0, import_react7.useState)(null);
+  const [mounted, setMounted] = (0, import_react7.useState)(false);
+  const rootRef = (0, import_react7.useRef)(null);
+  const pos = useAvoidOverlays(rootRef);
+  (0, import_react7.useEffect)(() => {
+    setMounted(true);
+  }, []);
   (0, import_react7.useEffect)(() => {
     const onEvent = (e) => {
       setPrefill(e.detail || null);
@@ -1326,14 +1617,27 @@ function FeedbackWidget({ onOpenTicket, hideButton = false, config }) {
     if (onOpenTicket) onOpenTicket(key);
     else window.location.assign(`/browse/${key}`);
   }, [onOpenTicket]);
+  const fab = !hideButton && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+    "div",
+    {
+      ref: rootRef,
+      className: "kids-feedback-root",
+      style: pos || void 0,
+      onPointerDown: stop,
+      onMouseDown: stop,
+      onMouseUp: stop,
+      onClick: stop,
+      children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(import_antd5.Tooltip, { title: "Report a bug or share an idea (Alt+Shift+F)", placement: "left", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("button", { type: "button", className: "kids-feedback-fab", onClick: () => {
+        setPrefill(null);
+        setOpen(true);
+      }, "aria-label": "Report a bug or share an idea", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(import_icons4.MessageOutlined, {}),
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "kids-feedback-fab-label", children: "Report" })
+      ] }) })
+    }
+  );
   const ui = /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(import_jsx_runtime6.Fragment, { children: [
-    !hideButton && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "kids-feedback-root", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(import_antd5.Tooltip, { title: "Report a bug or share an idea (Alt+Shift+F)", placement: "left", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("button", { type: "button", className: "kids-feedback-fab", onClick: () => {
-      setPrefill(null);
-      setOpen(true);
-    }, "aria-label": "Report a bug or share an idea", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(import_icons4.MessageOutlined, {}),
-      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "kids-feedback-fab-label", children: "Report" })
-    ] }) }) }),
+    fab && mounted ? (0, import_react_dom.createPortal)(fab, document.body) : fab,
     /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
       FeedbackModal,
       {
@@ -1374,10 +1678,17 @@ function RouteRecorder({ pathname }) {
   KIND_LABELS,
   MyReports,
   OPEN_EVENT,
+  REPORT_TOOL_KIND,
+  REPORT_TOOL_PREFIX,
   ReportProvider,
   RouteRecorder,
   STATE_COLORS,
   STATE_LABELS,
+  WIDGET_VERSION,
+  buildDiagnostics,
+  buildReportToolPayload,
+  clipText,
+  errorRecord,
   installContextBuffer,
   installHistoryTracking,
   lastUncaught,
