@@ -6,6 +6,11 @@
  * Submit order matters: the ticket is created first (the reporter gets a key
  * within one request), attachments go up against that key, then finalize posts
  * the context comment and starts AI triage in the background.
+ *
+ * "Problem with this form?" (footer, error state, partial-success state)
+ * switches the modal into a one-field report about the form itself, sent as
+ * kind 'report-tool' with a diagnostics block. If that fails too, the reporter
+ * gets the whole payload to copy, so nothing is lost.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Input, Button, Tabs, Typography, Space, Tooltip, message, Collapse, Popover, Upload, Alert } from 'antd';
@@ -21,6 +26,7 @@ import { useMediaRecorder, formatMs, extensionFor } from './recorders';
 import { snapshotContext } from './contextBuffer';
 import { pageMetadata, isDesktop } from './metadata';
 import { useReportConfig } from './ReportProvider';
+import { buildDiagnostics, buildReportToolPayload, errorRecord } from './diagnostics';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -65,7 +71,12 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
   const [progress, setProgress] = useState('');
   const [done, setDone] = useState(null);       // { ticketKey, warnings }
   const [refreshKey, setRefreshKey] = useState(0);
+  const [lastError, setLastError] = useState(null);       // { stage, message, stack }
+  const [failedUploads, setFailedUploads] = useState([]); // [{ name, error }]
+  const [problem, setProblem] = useState(null);           // { text, status, diagnostics, error?, copyText?, ticketKey? }
   const autoShotDone = useRef(false);
+  const copyRef = useRef(null);
+  const noteError = (stage, e) => setLastError(errorRecord(stage, e));
 
   const screenRec = useMediaRecorder({ kind: 'screen', maxMs: 2 * 60 * 1000 });
 
@@ -95,6 +106,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
         if (alive && r.blob) setShot({ ...r, url: URL.createObjectURL(r.blob) });
       } catch (e) {
         console.warn('[feedback] quick capture failed:', e.message);
+        noteError('auto-screenshot', e);
       } finally {
         if (alive) setCapturing(false);
       }
@@ -111,17 +123,18 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
     setHidden(false);
   }, [screenRec.result]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (screenRec.error) { setHidden(false); message.warning(screenRec.error); }
+    if (screenRec.error) { setHidden(false); message.warning(screenRec.error); noteError('screen-recording', screenRec.error); }
   }, [screenRec.error]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reset = useCallback(() => {
     setKind('bug'); setSeverity('annoying'); setSummary(''); setExpected(''); setSteps('');
     if (shot?.url) URL.revokeObjectURL(shot.url);
     setShot(null); setVoice(null); setScreen(null); setFiles([]); setDone(null); setProgress('');
+    setLastError(null); setFailedUploads([]); setProblem(null);
     autoShotDone.current = false;
   }, [shot]);
 
-  const handleClose = () => { onClose(); };
+  const handleClose = () => { setProblem(null); onClose(); };
 
   const retakeExact = async () => {
     setHidden(true);
@@ -132,7 +145,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
       if (shot?.url) URL.revokeObjectURL(shot.url);
       setShot({ ...r, url: URL.createObjectURL(r.blob) });
     } catch (e) {
-      if (e?.name !== 'NotAllowedError') message.warning(e.message || 'Screenshot cancelled.');
+      if (e?.name !== 'NotAllowedError') { message.warning(e.message || 'Screenshot cancelled.'); noteError('exact-screenshot', e); }
     } finally {
       setCapturing(false);
       setHidden(false);
@@ -148,6 +161,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
       setShot({ ...r, url: URL.createObjectURL(r.blob) });
     } catch (e) {
       message.warning(e.message || 'Screenshot failed.');
+      noteError('screenshot', e);
     } finally {
       setCapturing(false);
       setHidden(false);
@@ -186,6 +200,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
     setSubmitting(true);
     setProgress('Creating the ticket…');
     const warnings = [];
+    const failed = [];
     try {
       const ctx = { ...meta(), ...snapshotContext() };
       const created = await transport.submitFeedback({
@@ -211,19 +226,78 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
           await transport.uploadFeedbackFile(created.ticketKey, uploads[i]);
         } catch (e) {
           warnings.push(`${uploads[i].name} could not be uploaded (${e.message}).`);
+          failed.push({ name: uploads[i].name, error: e.message });
+          noteError('upload', e);
         }
       }
       setProgress('Finishing…');
-      await transport.finalizeFeedback(created.id).catch((e) => warnings.push(`Context comment failed (${e.message}).`));
+      await transport.finalizeFeedback(created.id).catch((e) => { warnings.push(`Context comment failed (${e.message}).`); noteError('finalize', e); });
+      setFailedUploads(failed);
       setDone({ ticketKey: created.ticketKey, warnings });
       setRefreshKey((k) => k + 1);
     } catch (e) {
       // The transport already told the reporter (KIDS: request() toasts the server's message).
       setProgress('');
+      noteError('submit', e);
     } finally {
       setSubmitting(false);
     }
   };
+
+  const formState = () => {
+    if (tab === 'mine') return 'my-reports';
+    if (submitting) return 'submitting';
+    if (done) return done.warnings.length ? 'sent-with-warnings' : 'sent';
+    if (lastError?.stage === 'submit') return 'submit-failed';
+    if (screenRec.status === 'recording') return 'recording-screen';
+    if (capturing) return 'capturing-screenshot';
+    return 'editing';
+  };
+
+  const openProblem = () => {
+    const { browser, viewport } = meta();
+    setProblem({
+      text: '',
+      status: 'editing',
+      diagnostics: buildDiagnostics({
+        state: formState(),
+        progress,
+        lastError,
+        failedAttachments: failedUploads,
+        browser,
+        viewport,
+        form: { kind, severity, summary, expected, steps, transcript: voice?.transcript, shot, voice, screen, files },
+      }),
+    });
+  };
+
+  const sendProblem = async () => {
+    const payload = buildReportToolPayload({
+      text: problem.text,
+      diagnostics: problem.diagnostics,
+      pageUrl: window.location.href,
+      route: window.location.pathname,
+      context: { ...meta(), ...snapshotContext() },
+    });
+    setProblem((p) => ({ ...p, status: 'sending' }));
+    try {
+      const created = await transport.submitFeedback(payload);
+      // reads-graphql only sends on finalize (ticketKey null); with a ticket the report already exists.
+      await transport.finalizeFeedback(created.id).catch((e) => { if (!created.ticketKey) throw e; });
+      setProblem((p) => ({ ...p, status: 'sent', ticketKey: created.ticketKey }));
+    } catch (e) {
+      setProblem((p) => ({ ...p, status: 'failed', error: e?.message || String(e), copyText: JSON.stringify(payload, null, 2) }));
+    }
+  };
+
+  const copyProblem = () => {
+    const el = copyRef.current;
+    const fallback = () => { el?.focus(); el?.select(); message.info('Selected. Press Ctrl+C (Cmd+C on a Mac) to copy.'); };
+    if (!navigator.clipboard?.writeText) { fallback(); return; }
+    navigator.clipboard.writeText(problem.copyText).then(() => message.success('Copied the report and diagnostics.'), fallback);
+  };
+
+  const problemLink = <button type="button" className="kf-link" onClick={openProblem}>Problem with this form?</button>;
 
   const transcriptionAvailable = Boolean(config?.transcription?.available);
   const desktop = isDesktop();
@@ -249,6 +323,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
       <div className="key">{done.ticketKey}</div>
       <Text>Thanks — your {kind === 'bug' ? 'report' : kind} is filed. You will be notified when it moves or gets a reply.</Text>
       {done.warnings.map((w) => <Alert key={w} type="warning" showIcon message={w} style={{ borderRadius: 8, textAlign: 'left' }} />)}
+      {done.warnings.length > 0 && problemLink}
       <Space>
         {done.ticketKey && (
           <Button type="primary" onClick={() => { onOpenTicket?.(done.ticketKey); handleClose(); }}>Open {done.ticketKey}</Button>
@@ -368,9 +443,19 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
 
   const footer = done ? null : (
     <div className="kf-footer">
+      {lastError?.stage === 'submit' && !submitting && (
+        <Alert
+          className="kf-error"
+          type="error"
+          showIcon
+          message={`Your report was not sent: ${lastError.message || 'unknown error'}. What you wrote is still here, so you can try again.`}
+          action={problemLink}
+        />
+      )}
       <span className="kf-included">
         We'll also include the page, your account, browser and recent errors.{' '}
         <Popover content={includedPopover} title="What gets included" trigger="click" placement="topLeft"><a>view</a></Popover>
+        <span className="kf-sep">·</span>{problemLink}
       </span>
       <Space>
         {progress && <Text type="secondary" style={{ fontSize: 12 }}><LoadingOutlined /> {progress}</Text>}
@@ -378,6 +463,63 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
         <Button type="primary" onClick={submit} disabled={!canSubmit} loading={submitting}>Send report</Button>
       </Space>
     </div>
+  );
+
+  const problemView = problem && (
+    <>
+      <div className="kf-body kf-problem">
+        {problem.status === 'sent' ? (
+          <div className="kf-success">
+            <CheckCircleFilled style={{ fontSize: 32, color: '#22c55e' }} />
+            <Text>Thanks, the team will look at the form itself{problem.ticketKey ? ` (${problem.ticketKey})` : ''}.</Text>
+          </div>
+        ) : (
+          <>
+            <Text type="secondary">Something wrong with this report form itself? Tell us what happened. The details below are attached automatically.</Text>
+            <TextArea
+              autoFocus
+              value={problem.text}
+              onChange={(e) => { const text = e.target.value; setProblem((p) => ({ ...p, text })); }}
+              placeholder="e.g. Send did nothing, or the screenshot never appeared"
+              autoSize={{ minRows: 2, maxRows: 6 }}
+              maxLength={2000}
+              disabled={problem.status === 'sending'}
+            />
+            <Collapse
+              ghost
+              size="small"
+              items={[{
+                key: 'diag',
+                label: <Text type="secondary" style={{ fontSize: 12.5 }}>Diagnostics we'll attach</Text>,
+                children: <div className="kf-context"><pre>{JSON.stringify(problem.diagnostics, null, 2)}</pre></div>,
+              }]}
+            />
+            {problem.status === 'failed' && (
+              <>
+                <Alert
+                  type="error"
+                  showIcon
+                  message={`This could not be sent either (${problem.error}). Copy it and send it to the team another way.`}
+                  action={<Button size="small" onClick={copyProblem}>Copy</Button>}
+                />
+                <textarea ref={copyRef} className="kf-copy" readOnly value={problem.copyText} aria-label="Report and diagnostics to copy" />
+              </>
+            )}
+          </>
+        )}
+      </div>
+      <div className="kf-footer">
+        <span />
+        <Space>
+          <Button onClick={() => setProblem(null)} disabled={problem.status === 'sending'}>Back to my report</Button>
+          {problem.status !== 'sent' && (
+            <Button type="primary" onClick={sendProblem} loading={problem.status === 'sending'}>
+              {problem.status === 'failed' ? 'Try again' : 'Send'}
+            </Button>
+          )}
+        </Space>
+      </div>
+    </>
   );
 
   return (
@@ -398,21 +540,21 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
       >
         <div className="kf-head">
           <div>
-            <h3>Report a bug or share an idea</h3>
+            <h3>{problem ? 'Problem with this form' : 'Report a bug or share an idea'}</h3>
             <p>{config?.project ? `Goes straight to the ${appName} team as a ticket in ${config.project.name}.` : `Goes straight to the ${appName} team as a ticket.`}</p>
           </div>
           <Space>
-            <Tabs
+            {!problem && <Tabs
               size="small"
               activeKey={tab}
               onChange={setTab}
               items={[{ key: 'new', label: 'New report' }, { key: 'mine', label: 'My reports' }]}
               style={{ marginBottom: -16 }}
-            />
+            />}
             <Button type="text" icon={<CloseOutlined />} onClick={handleClose} aria-label="Close" />
           </Space>
         </div>
-        {tab === 'new' ? (
+        {problem ? problemView : tab === 'new' ? (
           <>
             {form}
             {footer}
@@ -431,6 +573,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
         width={960}
         centered
         destroyOnHidden
+        wrapClassName="kids-feedback-annotator-wrap"
         title="Annotate the screenshot"
         // A stray click on the mask must not throw the drawing away.
         maskClosable={false}

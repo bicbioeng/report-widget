@@ -9,7 +9,7 @@ This is the KIDS in-app **Report** button, packaged for any React app: Vite, CRA
 
 It also captures context without the reporter doing anything: browser, viewport, recent errors and failed requests, and route history. The reporter can see all of it before sending.
 
-Version 1.x behaves exactly like the KIDS widget. The payload contract is in [PAYLOAD.md](./PAYLOAD.md).
+Version 1.0 behaves exactly like the KIDS widget; later changes are in [CHANGELOG.md](./CHANGELOG.md). The payload contract is in [PAYLOAD.md](./PAYLOAD.md).
 
 ## Install
 
@@ -68,4 +68,4 @@ cd fixtures/vite && npm install && npm run build
 cd fixtures/next && npm install && npm run build
 ```
 
-Release: bump `version`, commit, then tag `vX.Y.Z` and push the tag. CI builds both fixtures, then publishes to GitHub Packages.
+Release: bump `version`, run `npm run build`, commit (dist/ included — CI fails if it's stale), tag `vX.Y.Z`, push the tag. Consumers install `github:bicbioeng/report-widget#vX.Y.Z`.

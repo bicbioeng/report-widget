@@ -1,6 +1,7 @@
 import type { ReactElement, ReactNode } from 'react';
 
-export type ReportKind = 'bug' | 'idea' | 'question';
+/** 'report-tool' (v1.1): a report about the Report form itself, sent from "Problem with this form?". */
+export type ReportKind = 'bug' | 'idea' | 'question' | 'report-tool';
 export type ReportSeverity = 'blocked' | 'annoying' | 'minor';
 
 export interface ContextEntry { at: number; level: string; message: string; source?: string; [k: string]: unknown }
@@ -31,6 +32,34 @@ export interface ReportContext {
   capturedAt: string;
   errors: ContextEntry[];
   routeHistory: RouteEntry[];
+  /** v1.1, present only when kind === 'report-tool'. */
+  diagnostics?: ReportToolDiagnostics;
+}
+
+export interface ReportToolError { stage: string | null; message: string | null; stack: string | null }
+
+/** Contract 1.1 — see PAYLOAD.md. Free text is clipped to 280 chars. */
+export interface ReportToolDiagnostics {
+  widgetVersion: string;
+  state: string;
+  progress: string | null;
+  lastError: ReportToolError | null;
+  form: {
+    kind: ReportKind | null;
+    severity: ReportSeverity | null;
+    summary: string | null;
+    expected: string | null;
+    steps: string | null;
+    transcript: string | null;
+    screenshot: { method: string | null; annotated: boolean } | null;
+    voiceNote: { durationMs: number | null; mimeType: string | null } | null;
+    screenRecording: { durationMs: number | null; mimeType: string | null } | null;
+    files: { name: string; type: string | null; size: number | null }[];
+  };
+  failedAttachments: { name: string; error: string | null }[];
+  browser: ReportContext['browser'] | null;
+  viewport: ReportContext['viewport'] | null;
+  capturedAt: string;
 }
 
 export interface FeedbackConfig {
@@ -99,3 +128,18 @@ export const STATE_COLORS: Record<string, string>;
 export const STATE_LABELS: Record<string, string>;
 export const KIND_LABELS: Record<string, string>;
 export function relTime(iso: string): string;
+
+export const WIDGET_VERSION: string;
+export const REPORT_TOOL_KIND: 'report-tool';
+export const REPORT_TOOL_PREFIX: 'Report tool: ';
+export function clipText(v: unknown, max?: number): string | null;
+export function errorRecord(stage: string | null, e: unknown): ReportToolError | null;
+export function buildDiagnostics(input?: {
+  state?: string; progress?: string | null; lastError?: ReportToolError | null;
+  failedAttachments?: { name: string; error?: string | null }[];
+  browser?: ReportContext['browser'] | null; viewport?: ReportContext['viewport'] | null;
+  form?: Record<string, unknown>; now?: Date;
+}): ReportToolDiagnostics;
+export function buildReportToolPayload(input: {
+  text?: string; diagnostics: ReportToolDiagnostics; pageUrl?: string | null; route?: string | null; context?: Partial<ReportContext>;
+}): ReportPayload;

@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'tsup';
+
+const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
 
 const shared = {
   format: ['esm', 'cjs'],
@@ -6,6 +9,8 @@ const shared = {
   sourcemap: true,
   splitting: false,
   esbuildOptions(o) { o.jsx = 'automatic'; },
+  // Diagnostics report the widget version; baked in at build, never read from env.
+  define: { __WIDGET_VERSION__: JSON.stringify(version) },
 };
 
 export default defineConfig([
