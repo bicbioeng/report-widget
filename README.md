@@ -81,4 +81,4 @@ cd fixtures/vite && npm install && npm run build
 cd fixtures/next && npm install && npm run build
 ```
 
-Release: bump `version`, commit, then tag `vX.Y.Z` and push the tag. CI builds both fixtures, then publishes to GitHub Packages.
+Release: bump `version`, run `npm run build`, commit (dist/ included — CI fails if it's stale), tag `vX.Y.Z`, push the tag. Consumers install `github:bicbioeng/report-widget#vX.Y.Z`.
