@@ -15,7 +15,7 @@ const MAX_ENTRIES = 200;
 const MAX_ROUTES = 30;
 const MAX_MESSAGE = 600;
 
-const state = { installed: false, entries: [], routes: [] };
+const state = { installed: false, historyPatched: false, entries: [], routes: [] };
 
 function push(entry) {
   state.entries.push({ at: Date.now(), ...entry });
@@ -106,6 +106,23 @@ export function installContextBuffer() {
   };
 
   recordRoute(window.location.pathname);
+}
+
+/** Router-less route tracking: wrap pushState/replaceState, listen to popstate. Idempotent. */
+export function installHistoryTracking() {
+  if (state.historyPatched || typeof window === 'undefined') return;
+  state.historyPatched = true;
+  const rec = () => { try { recordRoute(window.location.pathname); } catch { /* observation only */ } };
+  for (const method of ['pushState', 'replaceState']) {
+    const original = window.history[method];
+    window.history[method] = function patched(...args) {
+      const out = original.apply(this, args);
+      rec();
+      return out;
+    };
+  }
+  window.addEventListener('popstate', rec);
+  rec();
 }
 
 /** A copy for the report: recent entries and routes. */

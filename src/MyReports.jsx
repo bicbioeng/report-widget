@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Empty, Skeleton, Tag, Typography, Button } from 'antd';
-import { fetchMyFeedback } from '../../utils/feedbackApi';
+import { useReportConfig } from './ReportProvider';
 
 const { Text } = Typography;
 
@@ -19,12 +19,13 @@ export function relTime(iso) {
 }
 
 export default function MyReports({ onOpenTicket, refreshKey }) {
+  const { transport } = useReportConfig();
   const [items, setItems] = useState(null);
   useEffect(() => {
     let alive = true;
-    fetchMyFeedback().then((r) => { if (alive) setItems(r.items || []); }).catch(() => { if (alive) setItems([]); });
+    transport.fetchMyFeedback().then((r) => { if (alive) setItems(r.items || []); }).catch(() => { if (alive) setItems([]); });
     return () => { alive = false; };
-  }, [refreshKey]);
+  }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (items === null) return <Skeleton active paragraph={{ rows: 3 }} />;
   if (!items.length) return <Empty description="You have not reported anything yet." image={Empty.PRESENTED_IMAGE_SIMPLE} />;
@@ -37,7 +38,7 @@ export default function MyReports({ onOpenTicket, refreshKey }) {
             <div className="t" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.ticket?.title || r.summary}</div>
             <div className="s">{KIND_LABELS[r.kind] || r.kind} · {relTime(r.createdAt)}{r.route ? ` · ${r.route}` : ''}</div>
           </div>
-          <Button size="small" type="link" onClick={() => onOpenTicket?.(r.ticketKey)}>{r.ticketKey}</Button>
+          {r.ticketKey && <Button size="small" type="link" onClick={() => onOpenTicket?.(r.ticketKey)}>{r.ticketKey}</Button>}
         </div>
       ))}
       <Text type="secondary" style={{ fontSize: 12 }}>You are notified when a report changes state or gets a reply.</Text>

@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Tooltip } from 'antd';
 import { MessageOutlined } from '@ant-design/icons';
 import FeedbackModal from './FeedbackModal';
-import './feedback.css';
+import { ReportProvider } from './ReportProvider';
 
 export const OPEN_EVENT = 'kids:feedback:open';
 
@@ -17,7 +17,11 @@ export function openFeedback(prefill) {
   window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: prefill || null }));
 }
 
-export default function FeedbackWidget({ onOpenTicket, hideButton = false }) {
+/**
+ * config: optional — same shape as <ReportProvider config>. Use it where the
+ * widget renders outside the provider (e.g. an error boundary's crash screen).
+ */
+export default function FeedbackWidget({ onOpenTicket, hideButton = false, config }) {
   const [open, setOpen] = useState(false);
   const [hidden, setHidden] = useState(false);
   const [prefill, setPrefill] = useState(null);
@@ -33,11 +37,12 @@ export default function FeedbackWidget({ onOpenTicket, hideButton = false }) {
   }, []);
 
   const handleOpenTicket = useCallback((key) => {
+    if (!key) return; // transports without tickets (reads-graphql) have nothing to open
     if (onOpenTicket) onOpenTicket(key);
     else window.location.assign(`/browse/${key}`);
   }, [onOpenTicket]);
 
-  return (
+  const ui = (
     <>
       {!hideButton && (
         <div className="kids-feedback-root">
@@ -59,4 +64,5 @@ export default function FeedbackWidget({ onOpenTicket, hideButton = false }) {
       />
     </>
   );
+  return config ? <ReportProvider config={config}>{ui}</ReportProvider> : ui;
 }

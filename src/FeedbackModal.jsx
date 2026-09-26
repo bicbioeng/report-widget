@@ -20,7 +20,7 @@ import { captureQuick, captureExact, supportsExactCapture, blobToFile } from './
 import { useMediaRecorder, formatMs, extensionFor } from './recorders';
 import { snapshotContext } from './contextBuffer';
 import { pageMetadata, isDesktop } from './metadata';
-import { fetchFeedbackConfig, submitFeedback, finalizeFeedback, uploadFeedbackFile } from '../../utils/feedbackApi';
+import { useReportConfig } from './ReportProvider';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -37,7 +37,7 @@ const SEVERITIES = [
 ];
 const PROMPTS = {
   bug: 'What happened? Say it the way you would to a colleague.',
-  idea: 'What would you like KIDS to do?',
+  idea: (app) => `What would you like ${app} to do?`,
   question: 'What are you trying to do?',
 };
 
@@ -46,6 +46,8 @@ function Chip({ active, cls, onClick, children }) {
 }
 
 export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden }) {
+  const { transport, buildSha, appName, getImpersonation } = useReportConfig();
+  const meta = () => pageMetadata({ buildSha, getImpersonation });
   const [tab, setTab] = useState('new');
   const [config, setConfig] = useState(null);
   const [kind, setKind] = useState('bug');
@@ -69,8 +71,8 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
 
   useEffect(() => {
     if (!open) return;
-    fetchFeedbackConfig().then(setConfig).catch(() => setConfig({ transcription: { available: false } }));
-  }, [open]);
+    transport.fetchFeedbackConfig().then(setConfig).catch(() => setConfig({ transcription: { available: false } }));
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Prefill from the crash screen / "report this error".
   useEffect(() => {
@@ -175,7 +177,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
     }
   };
 
-  const context = useMemo(() => (open ? { ...pageMetadata(), ...snapshotContext() } : null), [open, done]); // eslint-disable-line react-hooks/exhaustive-deps
+  const context = useMemo(() => (open ? { ...meta(), ...snapshotContext() } : null), [open, done]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const canSubmit = summary.trim().length > 0 && !submitting;
 
@@ -185,8 +187,8 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
     setProgress('Creating the ticket…');
     const warnings = [];
     try {
-      const ctx = { ...pageMetadata(), ...snapshotContext() };
-      const created = await submitFeedback({
+      const ctx = { ...meta(), ...snapshotContext() };
+      const created = await transport.submitFeedback({
         kind,
         severity: kind === 'bug' ? severity : null,
         summary: summary.trim(),
@@ -206,17 +208,17 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
       for (let i = 0; i < uploads.length; i += 1) {
         setProgress(`Uploading ${uploads[i].name} (${i + 1}/${uploads.length})…`);
         try {
-          await uploadFeedbackFile(created.ticketKey, uploads[i]);
+          await transport.uploadFeedbackFile(created.ticketKey, uploads[i]);
         } catch (e) {
           warnings.push(`${uploads[i].name} could not be uploaded (${e.message}).`);
         }
       }
       setProgress('Finishing…');
-      await finalizeFeedback(created.id).catch((e) => warnings.push(`Context comment failed (${e.message}).`));
+      await transport.finalizeFeedback(created.id).catch((e) => warnings.push(`Context comment failed (${e.message}).`));
       setDone({ ticketKey: created.ticketKey, warnings });
       setRefreshKey((k) => k + 1);
     } catch (e) {
-      // request() already toasted the server's message.
+      // The transport already told the reporter (KIDS: request() toasts the server's message).
       setProgress('');
     } finally {
       setSubmitting(false);
@@ -230,7 +232,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
     <div className="kf-context" style={{ maxWidth: 420 }}>
       <Text type="secondary" style={{ fontSize: 12 }}>Sent with the report so the developer can reproduce it. Nothing you type elsewhere, no passwords.</Text>
       <pre>{JSON.stringify({
-        page: window.location.pathname,
+        page: typeof window !== 'undefined' ? window.location.pathname : null,
         browser: context?.browser ? `${context.browser.name} ${context.browser.version} · ${context.browser.os} ${context.browser.osVersion || ''}` : null,
         viewport: context?.viewport ? `${context.viewport.width}×${context.viewport.height} @${context.viewport.dpr}x` : null,
         build: context?.buildSha,
@@ -248,7 +250,9 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
       <Text>Thanks — your {kind === 'bug' ? 'report' : kind} is filed. You will be notified when it moves or gets a reply.</Text>
       {done.warnings.map((w) => <Alert key={w} type="warning" showIcon message={w} style={{ borderRadius: 8, textAlign: 'left' }} />)}
       <Space>
-        <Button type="primary" onClick={() => { onOpenTicket?.(done.ticketKey); handleClose(); }}>Open {done.ticketKey}</Button>
+        {done.ticketKey && (
+          <Button type="primary" onClick={() => { onOpenTicket?.(done.ticketKey); handleClose(); }}>Open {done.ticketKey}</Button>
+        )}
         <Button onClick={reset}>Report another</Button>
         <Button type="text" onClick={handleClose}>Close</Button>
       </Space>
@@ -270,7 +274,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
           autoFocus
           value={summary}
           onChange={(e) => setSummary(e.target.value)}
-          placeholder={PROMPTS[kind]}
+          placeholder={typeof PROMPTS[kind] === 'function' ? PROMPTS[kind](appName) : PROMPTS[kind]}
           autoSize={{ minRows: 3, maxRows: 8 }}
           maxLength={20000}
         />
@@ -395,7 +399,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
         <div className="kf-head">
           <div>
             <h3>Report a bug or share an idea</h3>
-            <p>{config?.project ? `Goes straight to the KIDS team as a ticket in ${config.project.name}.` : 'Goes straight to the KIDS team as a ticket.'}</p>
+            <p>{config?.project ? `Goes straight to the ${appName} team as a ticket in ${config.project.name}.` : `Goes straight to the ${appName} team as a ticket.`}</p>
           </div>
           <Space>
             <Tabs

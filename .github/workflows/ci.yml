@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      # Fixtures install the packed tarball, exactly what a consumer gets.
+      - run: npm run pack:fixtures
+      - run: npm install --no-audit --no-fund && npm run build
+        working-directory: fixtures/vite
+      - run: npm install --no-audit --no-fund && npm run build
+        working-directory: fixtures/next
+        env: { NEXT_TELEMETRY_DISABLED: '1' }
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: '@bicbioeng'
+      - run: npm ci
+      - name: Tag matches package.json version
+        run: test "v$(node -p "require('./package.json').version")" = "${GITHUB_REF_NAME}"
+      - run: npm publish # prepack builds dist
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

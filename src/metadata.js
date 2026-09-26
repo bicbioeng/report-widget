@@ -2,7 +2,6 @@
  * Browser and page facts for a report. Nothing the reporter has to type.
  */
 import Bowser from 'bowser';
-import { getImpersonation } from '../../utils/impersonation';
 
 export function browserInfo() {
   try {
@@ -32,9 +31,9 @@ export function isDesktop() {
   }
 }
 
-export function pageMetadata() {
+export function pageMetadata({ buildSha = 'dev', getImpersonation } = {}) {
   let impersonating = null;
-  try { impersonating = getImpersonation()?.email || null; } catch { impersonating = null; }
+  try { impersonating = getImpersonation?.()?.email || null; } catch { impersonating = null; }
   return {
     browser: browserInfo(),
     viewport: {
@@ -46,7 +45,7 @@ export function pageMetadata() {
     language: window.navigator.language || null,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
     online: window.navigator.onLine,
-    buildSha: import.meta.env.VITE_BUILD_SHA || 'dev',
+    buildSha: buildSha || 'dev',
     impersonating,
     capturedAt: new Date().toISOString(),
   };

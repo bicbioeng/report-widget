@@ -16,7 +16,7 @@
 const WIDGET_SELECTORS = ['.kids-feedback-root', '.kids-feedback-modal-wrap', '.kids-feedback-pill'];
 
 export function supportsExactCapture() {
-  return Boolean(navigator.mediaDevices?.getDisplayMedia) && window.isSecureContext;
+  return typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getDisplayMedia) && window.isSecureContext;
 }
 
 export async function captureQuick({ scale } = {}) {

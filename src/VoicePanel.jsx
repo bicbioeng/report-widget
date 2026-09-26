@@ -5,11 +5,12 @@ import React, { useEffect, useState } from 'react';
 import { Button, Space, Typography, Alert } from 'antd';
 import { AudioOutlined, StopOutlined, DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
 import { useMediaRecorder, formatMs, supportsRecording, supportsSpeech, extensionFor } from './recorders';
-import { transcribeAudio } from '../../utils/feedbackApi';
+import { useReportConfig } from './ReportProvider';
 
 const { Text } = Typography;
 
 export default function VoicePanel({ value, onChange, transcriptionAvailable }) {
+  const { transport } = useReportConfig();
   const rec = useMediaRecorder({ kind: 'audio', captions: true, maxMs: 5 * 60 * 1000 });
   const [transcribing, setTranscribing] = useState(false);
   const [note, setNote] = useState(null);
@@ -25,7 +26,7 @@ export default function VoicePanel({ value, onChange, transcriptionAvailable }) 
       setTranscribing(true);
       setNote(null);
       try {
-        const out = await transcribeAudio(blob, { filename });
+        const out = await transport.transcribeAudio(blob, { filename });
         if (out.unavailable) {
           setNote(captions
             ? 'Transcribed by your browser. An admin can add a transcription key under AI Settings for higher accuracy.'
