@@ -23,23 +23,17 @@ jobs:
         working-directory: fixtures/next
         env: { NEXT_TELEMETRY_DISABLED: '1' }
 
-  publish:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+  dist-is-current:
+    # Consumers install the committed dist/ straight from a tag, so it must match the source.
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://npm.pkg.github.com
-          scope: '@bicbioeng'
       - run: npm ci
-      - name: Tag matches package.json version
+      - run: npm run build
+      - run: git diff --exit-code -- dist || (echo "dist/ is stale: run npm run build and commit it" && exit 1)
+      - name: A release tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
         run: test "v$(node -p "require('./package.json').version")" = "${GITHUB_REF_NAME}"
-      - run: npm publish # prepack builds dist
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

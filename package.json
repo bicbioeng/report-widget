@@ -51,7 +51,6 @@
   "scripts": {
     "build": "tsup && node scripts/copy-assets.mjs",
     "test": "node --test test/*.test.mjs",
-    "prepack": "npm run build",
     "pack:fixtures": "npm pack --pack-destination fixtures && node -e \"const fs=require('fs');const f=fs.readdirSync('fixtures').find(n=>n.endsWith('.tgz')&&n!=='report-widget.tgz');fs.renameSync('fixtures/'+f,'fixtures/report-widget.tgz')\""
   },
   "peerDependencies": {
@@ -76,8 +75,5 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bicbioeng/report-widget.git"
-  },
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
   }
 }

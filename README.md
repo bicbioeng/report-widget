@@ -13,28 +13,15 @@ Version 1.x behaves exactly like the KIDS widget. The payload contract is in [PA
 
 ## Install
 
-We recommend **GitHub Packages (npm registry)**:
+No registry and no token. Install from a release tag:
 
 ```
-# .npmrc (commit this)
-@bicbioeng:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
-```
-```
-npm install @bicbioeng/report-widget@^1
+npm install github:bicbioeng/report-widget#v1.0.0
 ```
 
-Why GitHub Packages rather than a git tag (`npm i github:bicbioeng/report-widget#v1.0.0`):
+The tag holds the built `dist/`, so nothing is compiled at install time, and plain `npm ci` works in CI and Docker builds. To upgrade, change the tag. Peer dependencies are `react`/`react-dom` >=18, `antd` ^5.13 and `@ant-design/icons`. CRA apps with peer conflicts need to add `--legacy-peer-deps`, as they already do.
 
-- **Consumers get a built artifact.** `dist/` is not committed. A git dependency has to run `prepare` in every consumer install, which means installing tsup and TypeScript and building inside every Docker, Kaniko and CRA build. That is slower, and it can break when the build toolchain drifts.
-- **Semver ranges work normally.** `^1.2.0`, `npm outdated`, Dependabot and lockfile integrity all behave as they do for any npm package. With git tags, you get a commit pin, and bumps are manual.
-- **Published versions are immutable.** A git tag can be moved.
-- **The cost is a token on every install.** GitHub Packages asks for one even when the package is public. `NODE_AUTH_TOKEN` needs `read:packages` on the `bicbioeng` org.
-  - In `bicbioeng` Actions, `GITHUB_TOKEN` is enough.
-  - Consumer repos in `READSTech` need an org secret holding a PAT.
-  - Docker builds need a BuildKit secret: `RUN --mount=type=secret,id=npm,env=NODE_AUTH_TOKEN npm ci`.
-
-  A private git dependency would need git credentials in the same places anyway, so the token doesn't add work compared with the alternative.
+The widget ships in every consumer's public bundle anyway, so a public repo gives nothing away. GitHub Packages was rejected because its npm registry asks for a token even for public packages, and that token is needed in every READSTech repo, every Docker build and every agent QA worktree.
 
 ## Use
 
