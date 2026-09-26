@@ -841,7 +841,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.1.1";
+var WIDGET_VERSION = "1.2.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT = 280;
@@ -1651,15 +1651,21 @@ export {
   buildReportToolPayload,
   clipText,
   errorRecord,
+  extensionFor,
+  formatMs,
   installContextBuffer,
   installHistoryTracking,
   lastUncaught,
   openFeedback,
   pageMetadata,
+  pickMime,
   recordError,
   recordRoute,
   relTime,
   snapshotContext,
+  supportsRecording,
+  supportsSpeech,
+  useMediaRecorder,
   useReportConfig,
   useRouteTracker
 };

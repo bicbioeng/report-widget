@@ -10,5 +10,8 @@ export {
 } from './contextBuffer';
 export { pageMetadata } from './metadata';
 export {
+  useMediaRecorder, formatMs, supportsRecording, supportsSpeech, extensionFor, pickMime,
+} from './recorders';
+export {
   WIDGET_VERSION, REPORT_TOOL_KIND, REPORT_TOOL_PREFIX, buildDiagnostics, buildReportToolPayload, clipText, errorRecord,
 } from './diagnostics';

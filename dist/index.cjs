@@ -46,15 +46,21 @@ __export(src_exports, {
   buildReportToolPayload: () => buildReportToolPayload,
   clipText: () => clipText,
   errorRecord: () => errorRecord,
+  extensionFor: () => extensionFor,
+  formatMs: () => formatMs,
   installContextBuffer: () => installContextBuffer,
   installHistoryTracking: () => installHistoryTracking,
   lastUncaught: () => lastUncaught,
   openFeedback: () => openFeedback,
   pageMetadata: () => pageMetadata,
+  pickMime: () => pickMime,
   recordError: () => recordError,
   recordRoute: () => recordRoute,
   relTime: () => relTime,
   snapshotContext: () => snapshotContext,
+  supportsRecording: () => supportsRecording,
+  supportsSpeech: () => supportsSpeech,
+  useMediaRecorder: () => useMediaRecorder,
   useReportConfig: () => useReportConfig,
   useRouteTracker: () => useRouteTracker
 });
@@ -878,7 +884,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.1.1";
+var WIDGET_VERSION = "1.2.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT = 280;
@@ -1689,15 +1695,21 @@ function RouteRecorder({ pathname }) {
   buildReportToolPayload,
   clipText,
   errorRecord,
+  extensionFor,
+  formatMs,
   installContextBuffer,
   installHistoryTracking,
   lastUncaught,
   openFeedback,
   pageMetadata,
+  pickMime,
   recordError,
   recordRoute,
   relTime,
   snapshotContext,
+  supportsRecording,
+  supportsSpeech,
+  useMediaRecorder,
   useReportConfig,
   useRouteTracker
 });
