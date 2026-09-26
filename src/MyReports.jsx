@@ -6,7 +6,7 @@ const { Text } = Typography;
 
 export const STATE_COLORS = { new: 'blue', acknowledged: 'geekblue', in_progress: 'gold', done: 'green', dismissed: 'default' };
 export const STATE_LABELS = { new: 'New', acknowledged: 'Acknowledged', in_progress: 'In progress', done: 'Done', dismissed: 'Dismissed' };
-export const KIND_LABELS = { bug: 'Bug', idea: 'Idea', question: 'Question' };
+export const KIND_LABELS = { bug: 'Bug', idea: 'Idea', question: 'Question', 'report-tool': 'Report tool' };
 
 export function relTime(iso) {
   const d = new Date(iso);

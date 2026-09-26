@@ -9,3 +9,6 @@ export {
   installContextBuffer, installHistoryTracking, recordRoute, recordError, snapshotContext, lastUncaught,
 } from './contextBuffer';
 export { pageMetadata } from './metadata';
+export {
+  WIDGET_VERSION, REPORT_TOOL_KIND, REPORT_TOOL_PREFIX, buildDiagnostics, buildReportToolPayload, clipText, errorRecord,
+} from './diagnostics';
