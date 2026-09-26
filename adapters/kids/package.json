@@ -1,0 +1,5 @@
+{
+  "main": "../../dist/adapters/kids.cjs",
+  "module": "../../dist/adapters/kids.js",
+  "types": "../../dist/adapters/kids.d.ts"
+}

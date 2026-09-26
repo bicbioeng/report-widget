@@ -8,3 +8,5 @@ for (const dir of ['', 'adapters/']) {
     cpSync(`types/${dir}${f}`, `dist/${dir}${f.replace(/\.d\.ts$/, '.d.cts')}`);
   }
 }
+// Root copy for resolvers that ignore "exports" (CRA Jest): `@bicbioeng/report-widget/styles.css`.
+cpSync('src/styles.css', 'styles.css');

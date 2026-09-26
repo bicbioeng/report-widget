@@ -1,0 +1,5 @@
+{
+  "main": "../../dist/adapters/reads-graphql.cjs",
+  "module": "../../dist/adapters/reads-graphql.js",
+  "types": "../../dist/adapters/reads-graphql.d.ts"
+}
