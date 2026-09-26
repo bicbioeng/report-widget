@@ -1,0 +1,456 @@
+/**
+ * The report form. One screen, designed for a non-technical reporter:
+ * type · what happened · how bad · screenshot · voice · files, everything else
+ * captured silently and shown under "we'll also include".
+ *
+ * Submit order matters: the ticket is created first (the reporter gets a key
+ * within one request), attachments go up against that key, then finalize posts
+ * the context comment and starts AI triage in the background.
+ */
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Modal, Input, Button, Tabs, Typography, Space, Tooltip, message, Collapse, Popover, Upload, Alert } from 'antd';
+import {
+  BugOutlined, BulbOutlined, QuestionCircleOutlined, CameraOutlined, EditOutlined, ReloadOutlined,
+  DeleteOutlined, PaperClipOutlined, VideoCameraOutlined, StopOutlined, CheckCircleFilled, CloseOutlined, LoadingOutlined,
+} from '@ant-design/icons';
+import Annotator from './Annotator';
+import VoicePanel from './VoicePanel';
+import MyReports from './MyReports';
+import { captureQuick, captureExact, supportsExactCapture, blobToFile } from './capture';
+import { useMediaRecorder, formatMs, extensionFor } from './recorders';
+import { snapshotContext } from './contextBuffer';
+import { pageMetadata, isDesktop } from './metadata';
+import { fetchFeedbackConfig, submitFeedback, finalizeFeedback, uploadFeedbackFile } from '../../utils/feedbackApi';
+
+const { Text } = Typography;
+const { TextArea } = Input;
+
+const KINDS = [
+  { key: 'bug', label: 'Bug', icon: <BugOutlined />, hint: 'Something is broken or wrong' },
+  { key: 'idea', label: 'Idea', icon: <BulbOutlined />, hint: 'A feature or improvement' },
+  { key: 'question', label: 'Question', icon: <QuestionCircleOutlined />, hint: 'How do I…?' },
+];
+const SEVERITIES = [
+  { key: 'blocked', label: "I'm blocked" },
+  { key: 'annoying', label: 'Annoying, I can work around it' },
+  { key: 'minor', label: 'Minor' },
+];
+const PROMPTS = {
+  bug: 'What happened? Say it the way you would to a colleague.',
+  idea: 'What would you like KIDS to do?',
+  question: 'What are you trying to do?',
+};
+
+function Chip({ active, cls, onClick, children }) {
+  return <button type="button" className={`kf-chip${active ? ` active ${cls}` : ''}`} onClick={onClick}>{children}</button>;
+}
+
+export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden }) {
+  const [tab, setTab] = useState('new');
+  const [config, setConfig] = useState(null);
+  const [kind, setKind] = useState('bug');
+  const [severity, setSeverity] = useState('annoying');
+  const [summary, setSummary] = useState('');
+  const [expected, setExpected] = useState('');
+  const [steps, setSteps] = useState('');
+  const [shot, setShot] = useState(null);       // { blob, url, width, height, method, annotated }
+  const [annotating, setAnnotating] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+  const [voice, setVoice] = useState(null);     // { blob, mimeType, durationMs, filename, transcript, transcriptSource }
+  const [screen, setScreen] = useState(null);   // { blob, mimeType, durationMs, filename }
+  const [files, setFiles] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [progress, setProgress] = useState('');
+  const [done, setDone] = useState(null);       // { ticketKey, warnings }
+  const [refreshKey, setRefreshKey] = useState(0);
+  const autoShotDone = useRef(false);
+
+  const screenRec = useMediaRecorder({ kind: 'screen', maxMs: 2 * 60 * 1000 });
+
+  useEffect(() => {
+    if (!open) return;
+    fetchFeedbackConfig().then(setConfig).catch(() => setConfig({ transcription: { available: false } }));
+  }, [open]);
+
+  // Prefill from the crash screen / "report this error".
+  useEffect(() => {
+    if (!open || !prefill) return;
+    if (prefill.kind) setKind(prefill.kind);
+    if (prefill.summary) setSummary(prefill.summary);
+    if (prefill.severity) setSeverity(prefill.severity);
+    setTab('new');
+  }, [open, prefill]);
+
+  // A quiet first screenshot when the form opens — no permission, no click.
+  useEffect(() => {
+    if (!open || autoShotDone.current || shot || done || prefill?.noAutoShot) return;
+    autoShotDone.current = true;
+    let alive = true;
+    (async () => {
+      try {
+        setCapturing(true);
+        const r = await captureQuick();
+        if (alive && r.blob) setShot({ ...r, url: URL.createObjectURL(r.blob) });
+      } catch (e) {
+        console.warn('[feedback] quick capture failed:', e.message);
+      } finally {
+        if (alive) setCapturing(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Screen recording finished → keep it.
+  useEffect(() => {
+    if (!screenRec.result) return;
+    const { blob, mimeType, durationMs } = screenRec.result;
+    setScreen({ blob, mimeType, durationMs, filename: `screen-recording.${extensionFor(mimeType)}` });
+    screenRec.reset();
+    setHidden(false);
+  }, [screenRec.result]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (screenRec.error) { setHidden(false); message.warning(screenRec.error); }
+  }, [screenRec.error]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const reset = useCallback(() => {
+    setKind('bug'); setSeverity('annoying'); setSummary(''); setExpected(''); setSteps('');
+    if (shot?.url) URL.revokeObjectURL(shot.url);
+    setShot(null); setVoice(null); setScreen(null); setFiles([]); setDone(null); setProgress('');
+    autoShotDone.current = false;
+  }, [shot]);
+
+  const handleClose = () => { onClose(); };
+
+  const retakeExact = async () => {
+    setHidden(true);
+    setCapturing(true);
+    try {
+      await new Promise((r) => setTimeout(r, 150)); // let the modal hide before the picker
+      const r = await captureExact();
+      if (shot?.url) URL.revokeObjectURL(shot.url);
+      setShot({ ...r, url: URL.createObjectURL(r.blob) });
+    } catch (e) {
+      if (e?.name !== 'NotAllowedError') message.warning(e.message || 'Screenshot cancelled.');
+    } finally {
+      setCapturing(false);
+      setHidden(false);
+    }
+  };
+  const retakeQuick = async () => {
+    setHidden(true);
+    setCapturing(true);
+    try {
+      await new Promise((r) => setTimeout(r, 120));
+      const r = await captureQuick();
+      if (shot?.url) URL.revokeObjectURL(shot.url);
+      setShot({ ...r, url: URL.createObjectURL(r.blob) });
+    } catch (e) {
+      message.warning(e.message || 'Screenshot failed.');
+    } finally {
+      setCapturing(false);
+      setHidden(false);
+    }
+  };
+
+  const startScreenRecording = async () => {
+    setHidden(true);
+    await screenRec.start();
+  };
+
+  const addFiles = (list) => {
+    const incoming = Array.from(list || []).filter(Boolean);
+    if (!incoming.length) return;
+    const max = config?.maxAttachmentBytes || 512 * 1024 * 1024;
+    const ok = incoming.filter((f) => f.size <= max);
+    if (ok.length < incoming.length) message.warning('Some files were too large to attach.');
+    setFiles((prev) => [...prev, ...ok].slice(0, 10));
+  };
+
+  // Paste an image anywhere in the form → attach it.
+  const onPaste = (e) => {
+    const items = Array.from(e.clipboardData?.items || []);
+    const imgs = items.filter((i) => i.kind === 'file' && i.type.startsWith('image/')).map((i) => i.getAsFile()).filter(Boolean);
+    if (imgs.length) {
+      addFiles(imgs.map((f, i) => new File([f], f.name && f.name !== 'image.png' ? f.name : `pasted-${Date.now()}-${i + 1}.png`, { type: f.type })));
+    }
+  };
+
+  const context = useMemo(() => (open ? { ...pageMetadata(), ...snapshotContext() } : null), [open, done]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const canSubmit = summary.trim().length > 0 && !submitting;
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    setProgress('Creating the ticket…');
+    const warnings = [];
+    try {
+      const ctx = { ...pageMetadata(), ...snapshotContext() };
+      const created = await submitFeedback({
+        kind,
+        severity: kind === 'bug' ? severity : null,
+        summary: summary.trim(),
+        expected: expected.trim() || null,
+        steps: steps.trim() || null,
+        transcript: voice?.transcript?.trim() || null,
+        transcriptSource: voice?.transcript ? voice.transcriptSource || null : null,
+        pageUrl: window.location.href,
+        route: window.location.pathname,
+        context: ctx,
+      });
+      const uploads = [];
+      if (shot?.blob) uploads.push(blobToFile(shot.blob, shot.annotated ? 'screenshot-annotated.png' : 'screenshot.png', 'image/png'));
+      if (voice?.blob) uploads.push(blobToFile(voice.blob, voice.filename, voice.mimeType));
+      if (screen?.blob) uploads.push(blobToFile(screen.blob, screen.filename, screen.mimeType));
+      uploads.push(...files);
+      for (let i = 0; i < uploads.length; i += 1) {
+        setProgress(`Uploading ${uploads[i].name} (${i + 1}/${uploads.length})…`);
+        try {
+          await uploadFeedbackFile(created.ticketKey, uploads[i]);
+        } catch (e) {
+          warnings.push(`${uploads[i].name} could not be uploaded (${e.message}).`);
+        }
+      }
+      setProgress('Finishing…');
+      await finalizeFeedback(created.id).catch((e) => warnings.push(`Context comment failed (${e.message}).`));
+      setDone({ ticketKey: created.ticketKey, warnings });
+      setRefreshKey((k) => k + 1);
+    } catch (e) {
+      // request() already toasted the server's message.
+      setProgress('');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const transcriptionAvailable = Boolean(config?.transcription?.available);
+  const desktop = isDesktop();
+
+  const includedPopover = (
+    <div className="kf-context" style={{ maxWidth: 420 }}>
+      <Text type="secondary" style={{ fontSize: 12 }}>Sent with the report so the developer can reproduce it. Nothing you type elsewhere, no passwords.</Text>
+      <pre>{JSON.stringify({
+        page: window.location.pathname,
+        browser: context?.browser ? `${context.browser.name} ${context.browser.version} · ${context.browser.os} ${context.browser.osVersion || ''}` : null,
+        viewport: context?.viewport ? `${context.viewport.width}×${context.viewport.height} @${context.viewport.dpr}x` : null,
+        build: context?.buildSha,
+        actingAs: context?.impersonating || undefined,
+        recentRoutes: (context?.routeHistory || []).slice(-6).map((r) => r.path),
+        recentErrors: (context?.errors || []).slice(-8).map((e) => `${e.level}: ${e.message}`),
+      }, null, 2)}</pre>
+    </div>
+  );
+
+  const form = done ? (
+    <div className="kf-success">
+      <CheckCircleFilled style={{ fontSize: 40, color: '#22c55e' }} />
+      <div className="key">{done.ticketKey}</div>
+      <Text>Thanks — your {kind === 'bug' ? 'report' : kind} is filed. You will be notified when it moves or gets a reply.</Text>
+      {done.warnings.map((w) => <Alert key={w} type="warning" showIcon message={w} style={{ borderRadius: 8, textAlign: 'left' }} />)}
+      <Space>
+        <Button type="primary" onClick={() => { onOpenTicket?.(done.ticketKey); handleClose(); }}>Open {done.ticketKey}</Button>
+        <Button onClick={reset}>Report another</Button>
+        <Button type="text" onClick={handleClose}>Close</Button>
+      </Space>
+    </div>
+  ) : (
+    <div className="kf-body" onPaste={onPaste}>
+      <div>
+        <div className="kf-chips">
+          {KINDS.map((k) => (
+            <Tooltip key={k.key} title={k.hint}>
+              <span><Chip active={kind === k.key} cls={k.key} onClick={() => setKind(k.key)}>{k.icon} {k.label}</Chip></span>
+            </Tooltip>
+          ))}
+        </div>
+      </div>
+
+      <div className="kf-textarea">
+        <TextArea
+          autoFocus
+          value={summary}
+          onChange={(e) => setSummary(e.target.value)}
+          placeholder={PROMPTS[kind]}
+          autoSize={{ minRows: 3, maxRows: 8 }}
+          maxLength={20000}
+        />
+      </div>
+
+      <VoicePanel value={voice} onChange={setVoice} transcriptionAvailable={transcriptionAvailable} />
+
+      {kind === 'bug' && (
+        <div>
+          <div className="kf-section-label">How bad is it?</div>
+          <div className="kf-chips">
+            {SEVERITIES.map((s) => <Chip key={s.key} active={severity === s.key} cls={s.key} onClick={() => setSeverity(s.key)}>{s.label}</Chip>)}
+          </div>
+        </div>
+      )}
+
+      <Collapse
+        ghost
+        size="small"
+        items={[{
+          key: 'more',
+          label: <Text type="secondary" style={{ fontSize: 12.5 }}>More detail (optional)</Text>,
+          children: (
+            <Space direction="vertical" style={{ width: '100%' }} size={8}>
+              {kind !== 'question' && (
+                <TextArea value={expected} onChange={(e) => setExpected(e.target.value)} placeholder={kind === 'bug' ? 'What did you expect to happen?' : 'Why would this help?'} autoSize={{ minRows: 2, maxRows: 5 }} />
+              )}
+              {kind === 'bug' && (
+                <TextArea value={steps} onChange={(e) => setSteps(e.target.value)} placeholder={'Steps to make it happen again, if you know them\n1. …\n2. …'} autoSize={{ minRows: 2, maxRows: 6 }} />
+              )}
+            </Space>
+          ),
+        }]}
+      />
+
+      <div className="kf-capture-row">
+        <div className={`kf-card${shot ? ' filled' : ''}`}>
+          <div className="kf-card-title">
+            <span><CameraOutlined /> Screenshot</span>
+            {capturing && <LoadingOutlined />}
+          </div>
+          {shot ? (
+            <div className="kf-shot">
+              <img src={shot.url} alt="Screenshot of the page" />
+              <div className="kf-shot-actions">
+                <Tooltip title="Draw on it"><Button size="small" icon={<EditOutlined />} onClick={() => setAnnotating(true)}>Annotate</Button></Tooltip>
+                {desktop && supportsExactCapture() && (
+                  <Tooltip title="Retake with exact pixels (asks to share this tab)"><Button size="small" icon={<ReloadOutlined />} onClick={retakeExact}>Retake</Button></Tooltip>
+                )}
+                <Tooltip title="Remove"><Button size="small" danger icon={<DeleteOutlined />} onClick={() => { URL.revokeObjectURL(shot.url); setShot(null); }} /></Tooltip>
+              </div>
+            </div>
+          ) : (
+            <Space wrap>
+              <Button size="small" icon={<CameraOutlined />} loading={capturing} onClick={retakeQuick}>Take screenshot</Button>
+              {desktop && supportsExactCapture() && <Button size="small" onClick={retakeExact} loading={capturing}>Exact pixels…</Button>}
+            </Space>
+          )}
+          {shot?.annotated && <Text type="secondary" style={{ fontSize: 11.5 }}>Annotated</Text>}
+        </div>
+
+        <div className={`kf-card${screen || files.length ? ' filled' : ''}`}>
+          <div className="kf-card-title"><span><PaperClipOutlined /> Recording & files</span></div>
+          <Space wrap>
+            {desktop && supportsExactCapture() && !screen && (
+              <Button size="small" icon={<VideoCameraOutlined />} loading={screenRec.status === 'requesting'} onClick={startScreenRecording}>Record screen</Button>
+            )}
+            <Upload multiple showUploadList={false} beforeUpload={(f, list) => { addFiles(list.length ? list : [f]); return false; }}>
+              <Button size="small" icon={<PaperClipOutlined />}>Add files</Button>
+            </Upload>
+          </Space>
+          {(screen || files.length > 0) && (
+            <div className="kf-files">
+              {screen && (
+                <span className="kf-file"><VideoCameraOutlined /> {screen.filename} · {formatMs(screen.durationMs)}
+                  <button type="button" onClick={() => setScreen(null)} aria-label="Remove recording"><CloseOutlined /></button>
+                </span>
+              )}
+              {files.map((f, i) => (
+                <span className="kf-file" key={`${f.name}-${i}`}>{f.name}
+                  <button type="button" onClick={() => setFiles((p) => p.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`}><CloseOutlined /></button>
+                </span>
+              ))}
+            </div>
+          )}
+          <Text type="secondary" style={{ fontSize: 11.5 }}>Paste an image anywhere in this form to attach it.</Text>
+        </div>
+      </div>
+    </div>
+  );
+
+  const footer = done ? null : (
+    <div className="kf-footer">
+      <span className="kf-included">
+        We'll also include the page, your account, browser and recent errors.{' '}
+        <Popover content={includedPopover} title="What gets included" trigger="click" placement="topLeft"><a>view</a></Popover>
+      </span>
+      <Space>
+        {progress && <Text type="secondary" style={{ fontSize: 12 }}><LoadingOutlined /> {progress}</Text>}
+        <Button onClick={handleClose} disabled={submitting}>Cancel</Button>
+        <Button type="primary" onClick={submit} disabled={!canSubmit} loading={submitting}>Send report</Button>
+      </Space>
+    </div>
+  );
+
+  return (
+    <>
+      <Modal
+        open={open}
+        onCancel={handleClose}
+        footer={null}
+        width={720}
+        centered
+        destroyOnHidden={false}
+        maskClosable={!submitting}
+        className={`kf-modal${hidden ? ' kf-hidden-mask' : ''}`}
+        wrapClassName={`kids-feedback-modal-wrap${hidden ? ' kf-hidden' : ''}`}
+        styles={{ mask: hidden ? { display: 'none' } : undefined }}
+        closable={false}
+        zIndex={1160}
+      >
+        <div className="kf-head">
+          <div>
+            <h3>Report a bug or share an idea</h3>
+            <p>{config?.project ? `Goes straight to the KIDS team as a ticket in ${config.project.name}.` : 'Goes straight to the KIDS team as a ticket.'}</p>
+          </div>
+          <Space>
+            <Tabs
+              size="small"
+              activeKey={tab}
+              onChange={setTab}
+              items={[{ key: 'new', label: 'New report' }, { key: 'mine', label: 'My reports' }]}
+              style={{ marginBottom: -16 }}
+            />
+            <Button type="text" icon={<CloseOutlined />} onClick={handleClose} aria-label="Close" />
+          </Space>
+        </div>
+        {tab === 'new' ? (
+          <>
+            {form}
+            {footer}
+          </>
+        ) : (
+          <div style={{ padding: '14px 20px 18px' }}>
+            <MyReports refreshKey={refreshKey} onOpenTicket={(k) => { onOpenTicket?.(k); handleClose(); }} />
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={annotating && Boolean(shot)}
+        onCancel={() => setAnnotating(false)}
+        footer={null}
+        width={960}
+        centered
+        destroyOnHidden
+        title="Annotate the screenshot"
+        // A stray click on the mask must not throw the drawing away.
+        maskClosable={false}
+        zIndex={1170}
+      >
+        {shot && (
+          <Annotator
+            src={shot.url}
+            onCancel={() => setAnnotating(false)}
+            onDone={(blob) => {
+              URL.revokeObjectURL(shot.url);
+              setShot({ ...shot, blob, url: URL.createObjectURL(blob), annotated: true });
+              setAnnotating(false);
+            }}
+          />
+        )}
+      </Modal>
+
+      {screenRec.status === 'recording' && (
+        <div className="kids-feedback-pill">
+          <span className="dot" /> Recording your screen · {formatMs(screenRec.elapsedMs)}
+          <Button size="small" danger icon={<StopOutlined />} onClick={screenRec.stop}>Stop</Button>
+        </div>
+      )}
+    </>
+  );
+}
