@@ -8,7 +8,7 @@ import { MessageOutlined } from "@ant-design/icons";
 
 // src/FeedbackModal.jsx
 import React5, { useCallback as useCallback3, useEffect as useEffect6, useMemo as useMemo2, useRef as useRef3, useState as useState5 } from "react";
-import { Modal, Input as Input2, Button as Button4, Tabs, Typography as Typography3, Space as Space3, Tooltip as Tooltip2, message, Collapse, Popover, Upload, Alert as Alert2 } from "antd";
+import { Modal, Input as Input2, Button as Button4, Tabs, Typography as Typography3, Space as Space3, Tooltip as Tooltip2, message as message2, Collapse, Popover, Upload, Alert as Alert2 } from "antd";
 import {
   BugOutlined,
   BulbOutlined,
@@ -26,8 +26,8 @@ import {
 } from "@ant-design/icons";
 
 // src/Annotator.jsx
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, Input, Space, Tooltip } from "antd";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Button, Input, Space, Tooltip, message } from "antd";
 import {
   BorderOutlined,
   ArrowRightOutlined,
@@ -36,8 +36,57 @@ import {
   FontSizeOutlined,
   UndoOutlined,
   CheckOutlined,
-  CloseOutlined
+  CloseOutlined,
+  DragOutlined,
+  ZoomInOutlined,
+  ZoomOutOutlined
 } from "@ant-design/icons";
+
+// src/annotatorMath.js
+function clampZoom(next, maxZoom) {
+  let z = Math.min(maxZoom, Math.max(1, next));
+  if (z - 1 < 1e-6) z = 1;
+  if (maxZoom - z < 1e-6) z = maxZoom;
+  return z;
+}
+var MAX_PCT = 400;
+var maxZoomFor = (fit) => Math.max(1, MAX_PCT / 100 / fit);
+var PCT_STEP = 25;
+function stepZoom(zoom, fit, dir) {
+  const pct = zoom * fit * 100;
+  const k = pct / PCT_STEP;
+  const next = (dir > 0 ? Math.floor(k + 1e-6) + 1 : Math.ceil(k - 1e-6) - 1) * PCT_STEP;
+  return clampZoom(next / 100 / fit, maxZoomFor(fit));
+}
+function clientToImage(clientX, clientY, rect, natW, natH) {
+  const x = Math.min(natW, Math.max(0, (clientX - rect.left) / rect.width * natW));
+  const y = Math.min(natH, Math.max(0, (clientY - rect.top) / rect.height * natH));
+  return { x, y };
+}
+var imageCoordAt = (c, rectStart, rectSize, nat) => (c - rectStart) / rectSize * nat;
+var scrollToAnchor = (scroll, rectStart, rectSize, nat, i, c) => scroll + rectStart + i / nat * rectSize - c;
+function heldAnchor(last, px, py, sl, st) {
+  return last && last.px === px && last.py === py && last.sl === sl && last.st === st ? { ix: last.ix, iy: last.iy } : null;
+}
+var clamp = (v, lo, hi) => Math.max(lo, Math.min(v, hi));
+function textBoxRect(cx, cy, dw, dh) {
+  const width = Math.max(0, Math.min(200, dw - 4));
+  return { left: clamp(cx, 0, dw - width - 4), top: clamp(cy - 18, 0, dh - 28), width };
+}
+var ACTIVATES = 'button, a, [role="button"], [role="tab"], [role="checkbox"]';
+var spaceActivates = (t, tabFocused) => Boolean(t && t === tabFocused && t.matches && t.matches(ACTIVATES));
+function withPendingText(shapes, textAt, textValue, color) {
+  const text = textValue.trim();
+  return textAt && text ? [...shapes, { type: "text", color, x: textAt.x, y: textAt.y, text }] : shapes;
+}
+function takeOnce(ref) {
+  const v = ref.current;
+  ref.current = null;
+  return v;
+}
+var exportErrorText = (subject) => `The marked-up ${subject.toLowerCase()} couldn't be saved. Cancel to keep the original attached.`;
+
+// src/Annotator.jsx
 import { jsx, jsxs } from "react/jsx-runtime";
 var COLORS = ["#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#0f172a", "#ffffff"];
 var TOOLS = [
@@ -45,8 +94,10 @@ var TOOLS = [
   { key: "arrow", label: "Arrow", icon: /* @__PURE__ */ jsx(ArrowRightOutlined, {}) },
   { key: "pen", label: "Draw", icon: /* @__PURE__ */ jsx(HighlightOutlined, {}) },
   { key: "blur", label: "Blur", icon: /* @__PURE__ */ jsx(EyeInvisibleOutlined, {}) },
-  { key: "text", label: "Text", icon: /* @__PURE__ */ jsx(FontSizeOutlined, {}) }
+  { key: "text", label: "Text", icon: /* @__PURE__ */ jsx(FontSizeOutlined, {}) },
+  { key: "move", label: "Move", icon: /* @__PURE__ */ jsx(DragOutlined, {}) }
 ];
+var isTyping = (t) => t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
 function drawShape(ctx, s, blurred, lineScale) {
   ctx.save();
   ctx.strokeStyle = s.color;
@@ -87,18 +138,38 @@ function drawShape(ctx, s, blurred, lineScale) {
   }
   ctx.restore();
 }
-function Annotator({ src, onDone, onCancel }) {
+function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", subject = "Screenshot" }) {
+  var _a, _b;
   const canvasRef = useRef(null);
   const stageRef = useRef(null);
+  const wrapRef = useRef(null);
   const imgRef = useRef(null);
   const blurRef = useRef(null);
   const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [tool, setTool] = useState("rect");
   const [color, setColor] = useState(COLORS[0]);
   const [shapes, setShapes] = useState([]);
   const [draft, setDraft] = useState(null);
   const [textAt, setTextAt] = useState(null);
   const [textValue, setTextValue] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [fit, setFit] = useState(1);
+  const [panReady, setPanReady] = useState(false);
+  const [panning, setPanning] = useState(false);
+  const panRef = useRef(null);
+  const anchorRef = useRef(null);
+  const lastAnchorRef = useRef(null);
+  const zoomRef = useRef(1);
+  const keysRef = useRef(null);
+  const tabFocusRef = useRef(null);
+  const draftRef = useRef(null);
+  draftRef.current = draft;
+  const shapesRef = useRef(shapes);
+  shapesRef.current = shapes;
+  const textAtRef = useRef(textAt);
+  textAtRef.current = textAt;
   useEffect(() => {
     const img = new Image();
     img.onload = () => {
@@ -115,6 +186,7 @@ function Annotator({ src, onDone, onCancel }) {
       blurRef.current = b;
       setReady(true);
     };
+    img.onerror = () => setFailed(true);
     img.src = src;
   }, [src]);
   const lineScale = useMemo(() => imgRef.current ? Math.max(1, imgRef.current.naturalWidth / 1400) : 1, [ready]);
@@ -131,16 +203,142 @@ function Annotator({ src, onDone, onCancel }) {
   useEffect(() => {
     if (ready) render();
   }, [ready, render]);
+  useEffect(() => {
+    const stage = stageRef.current;
+    const img = imgRef.current;
+    if (!ready || !stage || !img) return void 0;
+    const measure = () => setFit(Math.min(1, stage.offsetWidth / img.naturalWidth, stage.offsetHeight / img.naturalHeight));
+    measure();
+    if (typeof ResizeObserver === "undefined") return void 0;
+    const ro = new ResizeObserver(measure);
+    ro.observe(stage);
+    return () => ro.disconnect();
+  }, [ready]);
+  const natW = ((_a = imgRef.current) == null ? void 0 : _a.naturalWidth) || 0;
+  const natH = ((_b = imgRef.current) == null ? void 0 : _b.naturalHeight) || 0;
+  const scale = fit * zoom;
+  const maxZoom = maxZoomFor(fit);
+  const dispW = Math.floor(natW * scale);
+  const dispH = Math.floor(natH * scale);
+  const textBox = textAt && textBoxRect(textAt.cx, textAt.cy, dispW, dispH);
+  useLayoutEffect(() => {
+    const a = anchorRef.current;
+    const stage = stageRef.current;
+    const wrap = wrapRef.current;
+    anchorRef.current = null;
+    if (!a || !stage || !wrap || !imgRef.current) return;
+    const r = wrap.getBoundingClientRect();
+    const img = imgRef.current;
+    stage.scrollLeft = scrollToAnchor(stage.scrollLeft, r.left, r.width, img.naturalWidth, a.ix, a.px);
+    stage.scrollTop = scrollToAnchor(stage.scrollTop, r.top, r.height, img.naturalHeight, a.iy, a.py);
+    lastAnchorRef.current = { ...a, sl: stage.scrollLeft, st: stage.scrollTop };
+  }, [zoom, fit]);
+  const commitText = () => {
+    const at = takeOnce(textAtRef);
+    if (!at) return;
+    setShapes((s) => withPendingText(s, at, textValue, color));
+    setTextAt(null);
+    setTextValue("");
+  };
+  const zoomTo = (next, px, py) => {
+    const stage = stageRef.current;
+    const wrap = wrapRef.current;
+    if (!ready || !stage || !wrap) return;
+    const z = clampZoom(next, maxZoom);
+    if (z === zoomRef.current) return;
+    if (textAt) commitText();
+    if (px == null) {
+      const sr = stage.getBoundingClientRect();
+      px = sr.left + stage.clientWidth / 2;
+      py = sr.top + stage.clientHeight / 2;
+    }
+    const held = heldAnchor(lastAnchorRef.current, px, py, stage.scrollLeft, stage.scrollTop);
+    const r = wrap.getBoundingClientRect();
+    anchorRef.current = held ? { px, py, ...held } : { px, py, ix: imageCoordAt(px, r.left, r.width, natW), iy: imageCoordAt(py, r.top, r.height, natH) };
+    zoomRef.current = z;
+    setZoom(z);
+  };
+  const zoomIn = () => zoomTo(stepZoom(zoomRef.current, fit, 1));
+  const zoomOut = () => zoomTo(stepZoom(zoomRef.current, fit, -1));
+  const zoomFit = () => zoomTo(1);
+  keysRef.current = { zoomIn, zoomOut, zoomFit, zoomTo };
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return void 0;
+    const onWheel = (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      keysRef.current.zoomTo(zoomRef.current * Math.exp(-dy * 0.01), e.clientX, e.clientY);
+    };
+    stage.addEventListener("wheel", onWheel, { passive: false });
+    return () => stage.removeEventListener("wheel", onWheel);
+  }, []);
+  useEffect(() => {
+    let tabbing = false;
+    const onKeyDown = (e) => {
+      tabbing = e.key === "Tab";
+      if (isTyping(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === " ") {
+        if (spaceActivates(e.target, tabFocusRef.current)) return;
+        e.preventDefault();
+        if (!e.repeat) setPanReady(true);
+      } else if (e.key === "+" || e.key === "=") {
+        e.preventDefault();
+        keysRef.current.zoomIn();
+      } else if (e.key === "-") {
+        e.preventDefault();
+        keysRef.current.zoomOut();
+      } else if (e.key === "0") {
+        e.preventDefault();
+        keysRef.current.zoomFit();
+      }
+    };
+    const onKeyUp = (e) => {
+      if (e.key !== " " || isTyping(e.target) || spaceActivates(e.target, tabFocusRef.current)) return;
+      e.preventDefault();
+      setPanReady(false);
+    };
+    const onFocusIn = (e) => {
+      tabFocusRef.current = tabbing ? e.target : null;
+    };
+    const onPointerDown2 = () => {
+      tabbing = false;
+      tabFocusRef.current = null;
+    };
+    const onBlur = () => setPanReady(false);
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("pointerdown", onPointerDown2, true);
+    window.addEventListener("focusin", onFocusIn);
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("pointerdown", onPointerDown2, true);
+      window.removeEventListener("focusin", onFocusIn);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
   const toCanvas = (e) => {
     const c = canvasRef.current;
     const r = c.getBoundingClientRect();
-    const x = (e.clientX - r.left) / r.width * c.width;
-    const y = (e.clientY - r.top) / r.height * c.height;
+    const { x, y } = clientToImage(e.clientX, e.clientY, r, c.width, c.height);
     return { x, y, cx: e.clientX - r.left, cy: e.clientY - r.top };
   };
   const onPointerDown = (e) => {
-    var _a, _b;
-    if (!ready || textAt) return;
+    var _a2, _b2, _c, _d, _e, _f;
+    if (!ready || ((_b2 = (_a2 = e.target).closest) == null ? void 0 : _b2.call(_a2, ".kf-text-input"))) return;
+    const stage = stageRef.current;
+    if ((tool === "move" || panReady) && e.button === 0 || e.button === 1) {
+      e.preventDefault();
+      if (textAt) commitText();
+      panRef.current = { x: e.clientX, y: e.clientY, sl: stage.scrollLeft, st: stage.scrollTop };
+      setPanning(true);
+      (_d = (_c = e.currentTarget).setPointerCapture) == null ? void 0 : _d.call(_c, e.pointerId);
+      return;
+    }
+    if (textAt || e.button !== 0 || e.target !== canvasRef.current) return;
     e.preventDefault();
     const p = toCanvas(e);
     if (tool === "text") {
@@ -148,36 +346,62 @@ function Annotator({ src, onDone, onCancel }) {
       setTextValue("");
       return;
     }
-    (_b = (_a = e.currentTarget).setPointerCapture) == null ? void 0 : _b.call(_a, e.pointerId);
+    (_f = (_e = e.currentTarget).setPointerCapture) == null ? void 0 : _f.call(_e, e.pointerId);
     if (tool === "pen") setDraft({ type: "pen", color, points: [{ x: p.x, y: p.y }] });
     else setDraft({ type: tool, color, x1: p.x, y1: p.y, x2: p.x, y2: p.y });
   };
   const onPointerMove = (e) => {
+    const pan = panRef.current;
+    if (pan) {
+      const stage = stageRef.current;
+      stage.scrollLeft = pan.sl - (e.clientX - pan.x);
+      stage.scrollTop = pan.st - (e.clientY - pan.y);
+      return;
+    }
     if (!draft) return;
     const p = toCanvas(e);
     setDraft((d) => d.type === "pen" ? { ...d, points: [...d.points, { x: p.x, y: p.y }] } : { ...d, x2: p.x, y2: p.y });
   };
   const onPointerUp = () => {
-    if (!draft) return;
-    const tooSmall = draft.type !== "pen" && Math.abs(draft.x2 - draft.x1) < 3 && Math.abs(draft.y2 - draft.y1) < 3;
-    if (!tooSmall) setShapes((s) => [...s, draft]);
+    if (panRef.current) {
+      panRef.current = null;
+      setPanning(false);
+      return;
+    }
+    const d = draftRef.current;
+    if (!d) return;
+    draftRef.current = null;
+    const tooSmall = d.type !== "pen" && Math.abs(d.x2 - d.x1) < 3 && Math.abs(d.y2 - d.y1) < 3;
+    if (!tooSmall) setShapes((s) => [...s, d]);
     setDraft(null);
-  };
-  const commitText = () => {
-    if (textAt && textValue.trim()) setShapes((s) => [...s, { type: "text", color, x: textAt.x, y: textAt.y, text: textValue.trim() }]);
-    setTextAt(null);
-    setTextValue("");
   };
   const finish = () => {
+    const c = canvasRef.current;
+    const img = imgRef.current;
+    if (exporting || !c || !img) return;
+    const all = withPendingText(shapesRef.current, takeOnce(textAtRef), textValue, color);
+    setTextAt(null);
+    setTextValue("");
+    setShapes(all);
+    draftRef.current = null;
     setDraft(null);
-    requestAnimationFrame(() => {
-      render();
-      canvasRef.current.toBlob((blob) => onDone(blob), "image/png");
-    });
+    const ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.drawImage(img, 0, 0);
+    for (const s of all) drawShape(ctx, s, blurRef.current, lineScale);
+    setExporting(true);
+    c.toBlob((blob) => {
+      if (blob) {
+        onDone(blob);
+        return;
+      }
+      setExporting(false);
+      message.error(exportErrorText(subject));
+    }, "image/png");
   };
   return /* @__PURE__ */ jsxs("div", { className: "kf-annotator", children: [
-    /* @__PURE__ */ jsxs("div", { className: "kf-tools", children: [
-      TOOLS.map((t) => /* @__PURE__ */ jsxs("button", { type: "button", className: `kf-tool${tool === t.key ? " active" : ""}`, onClick: () => setTool(t.key), children: [
+    /* @__PURE__ */ jsxs("div", { className: "kf-tools", role: "toolbar", "aria-label": "Markup tools", children: [
+      TOOLS.map((t) => /* @__PURE__ */ jsxs("button", { type: "button", className: `kf-tool${tool === t.key ? " active" : ""}`, "aria-pressed": tool === t.key, disabled: t.key === "move" && !ready, onClick: () => setTool(t.key), children: [
         t.icon,
         " ",
         t.label
@@ -185,42 +409,73 @@ function Annotator({ src, onDone, onCancel }) {
       /* @__PURE__ */ jsx("span", { style: { width: 8 } }),
       COLORS.map((c) => /* @__PURE__ */ jsx(Tooltip, { title: c, children: /* @__PURE__ */ jsx("span", { className: `kf-swatch${color === c ? " active" : ""}`, style: { background: c }, onClick: () => setColor(c) }) }, c)),
       /* @__PURE__ */ jsx("span", { style: { flex: 1 } }),
+      /* @__PURE__ */ jsxs("span", { className: "kf-zoom", role: "group", "aria-label": "Zoom", children: [
+        /* @__PURE__ */ jsx(Tooltip, { title: "Zoom out (\u2212)", children: /* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Zoom out", disabled: !ready || zoom <= 1, onClick: zoomOut, children: /* @__PURE__ */ jsx(ZoomOutOutlined, {}) }) }),
+        /* @__PURE__ */ jsx("span", { className: "kf-zoom-pct", "aria-live": "polite", children: ready ? `${Math.round(scale * 100)}%` : "\u2014" }),
+        /* @__PURE__ */ jsx(Tooltip, { title: "Zoom in (+)", children: /* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Zoom in", disabled: !ready || zoom >= maxZoom, onClick: zoomIn, children: /* @__PURE__ */ jsx(ZoomInOutlined, {}) }) }),
+        /* @__PURE__ */ jsx(Tooltip, { title: "Fit to window (0)", children: /* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Fit to window", disabled: !ready || zoom === 1, onClick: zoomFit, children: "Fit" }) })
+      ] }),
       /* @__PURE__ */ jsx(Button, { size: "small", icon: /* @__PURE__ */ jsx(UndoOutlined, {}), disabled: !shapes.length, onClick: () => setShapes((s) => s.slice(0, -1)), children: "Undo" })
     ] }),
-    /* @__PURE__ */ jsxs("div", { className: "kf-stage", ref: stageRef, children: [
-      /* @__PURE__ */ jsx(
-        "canvas",
-        {
-          ref: canvasRef,
-          onPointerDown,
-          onPointerMove,
-          onPointerUp,
-          onPointerLeave: onPointerUp
-        }
-      ),
-      textAt && /* @__PURE__ */ jsx("div", { className: "kf-text-input", style: { left: textAt.cx, top: textAt.cy - 18 }, children: /* @__PURE__ */ jsx(
-        Input,
-        {
-          autoFocus: true,
-          size: "small",
-          value: textValue,
-          placeholder: "Type, then Enter",
-          style: { width: 200 },
-          onChange: (e) => setTextValue(e.target.value),
-          onPressEnter: commitText,
-          onBlur: commitText,
-          onKeyDown: (e) => {
-            if (e.key === "Escape") {
-              setTextAt(null);
-              setTextValue("");
-            }
-          }
-        }
-      ) })
-    ] }),
-    /* @__PURE__ */ jsxs(Space, { style: { justifyContent: "flex-end", width: "100%" }, children: [
-      /* @__PURE__ */ jsx(Button, { icon: /* @__PURE__ */ jsx(CloseOutlined, {}), onClick: onCancel, children: "Cancel" }),
-      /* @__PURE__ */ jsx(Button, { type: "primary", icon: /* @__PURE__ */ jsx(CheckOutlined, {}), onClick: finish, disabled: !ready, children: "Use this screenshot" })
+    /* @__PURE__ */ jsxs(
+      "div",
+      {
+        className: `kf-stage${panReady || tool === "move" ? " kf-pan-ready" : ""}${panning ? " kf-panning" : ""}`,
+        ref: stageRef,
+        tabIndex: 0,
+        "aria-label": "Image area. Use the arrow keys to scroll when zoomed in.",
+        onPointerDown,
+        onPointerMove,
+        onPointerUp,
+        onPointerCancel: onPointerUp,
+        onLostPointerCapture: onPointerUp,
+        onMouseDown: (e) => {
+          if (e.button === 1) e.preventDefault();
+        },
+        children: [
+          /* @__PURE__ */ jsxs("div", { className: "kf-canvas-wrap", ref: wrapRef, style: failed ? { display: "none" } : void 0, children: [
+            /* @__PURE__ */ jsx(
+              "canvas",
+              {
+                ref: canvasRef,
+                role: "img",
+                "aria-label": `${subject} you are annotating`,
+                style: ready ? { width: dispW, height: dispH } : void 0
+              }
+            ),
+            textAt && /* @__PURE__ */ jsx("div", { className: "kf-text-input", style: { left: textBox.left, top: textBox.top }, children: /* @__PURE__ */ jsx(
+              Input,
+              {
+                autoFocus: true,
+                size: "small",
+                value: textValue,
+                placeholder: "Type, then Enter",
+                style: { width: textBox.width },
+                onChange: (e) => setTextValue(e.target.value),
+                onPressEnter: commitText,
+                onBlur: commitText,
+                onKeyDown: (e) => {
+                  if (e.key === "Escape") {
+                    e.stopPropagation();
+                    textAtRef.current = null;
+                    setTextAt(null);
+                    setTextValue("");
+                  }
+                }
+              }
+            ) })
+          ] }),
+          failed && /* @__PURE__ */ jsx("div", { className: "kf-stage-error", children: "This image can't be opened for markup. It will still be attached as it is." })
+        ]
+      }
+    ),
+    /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }, children: [
+      zoom > 1 && /* @__PURE__ */ jsx("span", { className: "kf-zoom-hint", children: "Hold Space and drag to move around. Pinch or Ctrl + scroll to zoom." }),
+      /* @__PURE__ */ jsx("span", { style: { flex: 1 } }),
+      /* @__PURE__ */ jsxs(Space, { children: [
+        /* @__PURE__ */ jsx(Button, { icon: /* @__PURE__ */ jsx(CloseOutlined, {}), onClick: onCancel, children: "Cancel" }),
+        /* @__PURE__ */ jsx(Button, { type: "primary", icon: /* @__PURE__ */ jsx(CheckOutlined, {}), onClick: finish, disabled: !ready || exporting, loading: exporting, children: doneLabel })
+      ] })
     ] })
   ] });
 }
@@ -472,8 +727,8 @@ function recordRoute(path) {
   state.routes.push({ at: Date.now(), path });
   if (state.routes.length > MAX_ROUTES) state.routes.splice(0, state.routes.length - MAX_ROUTES);
 }
-function recordError(level, message2, extra = {}) {
-  push({ level, message: String(message2).slice(0, MAX_MESSAGE), ...extra });
+function recordError(level, message3, extra = {}) {
+  push({ level, message: String(message3).slice(0, MAX_MESSAGE), ...extra });
 }
 function installContextBuffer() {
   if (state.installed || typeof window === "undefined") return;
@@ -841,7 +1096,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.2.0";
+var WIDGET_VERSION = "1.3.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT = 280;
@@ -939,6 +1194,20 @@ var PROMPTS = {
 function Chip({ active, cls, onClick, children }) {
   return /* @__PURE__ */ jsx5("button", { type: "button", className: `kf-chip${active ? ` active ${cls}` : ""}`, onClick, children });
 }
+var canAnnotate = (f) => f.type.startsWith("image/") && f.type !== "image/svg+xml";
+var annotatedName = (name) => {
+  const base = name.replace(/\.[^./]*$/, "");
+  return base.endsWith("-annotated") ? `${base}.png` : `${base}-annotated.png`;
+};
+function FileThumb({ file }) {
+  const [url, setUrl] = useState5(null);
+  useEffect6(() => {
+    const u = URL.createObjectURL(file);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file]);
+  return url ? /* @__PURE__ */ jsx5("img", { className: "kf-file-thumb", src: url, alt: "" }) : /* @__PURE__ */ jsx5("span", { className: "kf-file-thumb" });
+}
 function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden }) {
   var _a;
   const { transport, buildSha, appName, getImpersonation } = useReportConfig();
@@ -951,7 +1220,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
   const [expected, setExpected] = useState5("");
   const [steps, setSteps] = useState5("");
   const [shot, setShot] = useState5(null);
-  const [annotating, setAnnotating] = useState5(false);
+  const [annotateTarget, setAnnotateTarget] = useState5(null);
   const [capturing, setCapturing] = useState5(false);
   const [voice, setVoice] = useState5(null);
   const [screen, setScreen] = useState5(null);
@@ -967,6 +1236,18 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
   const copyRef = useRef3(null);
   const noteError = (stage, e) => setLastError(errorRecord(stage, e));
   const screenRec = useMediaRecorder({ kind: "screen", maxMs: 2 * 60 * 1e3 });
+  const closeAnnotator = () => {
+    if ((annotateTarget == null ? void 0 : annotateTarget.kind) === "file") URL.revokeObjectURL(annotateTarget.url);
+    setAnnotateTarget(null);
+  };
+  const annotateFile = (index, file) => setAnnotateTarget({ kind: "file", index, file, url: URL.createObjectURL(file) });
+  const lastTargetRef = useRef3(null);
+  if (annotateTarget) lastTargetRef.current = annotateTarget;
+  const shownTarget = annotateTarget || lastTargetRef.current;
+  useEffect6(() => () => {
+    var _a2;
+    if (((_a2 = lastTargetRef.current) == null ? void 0 : _a2.kind) === "file") URL.revokeObjectURL(lastTargetRef.current.url);
+  }, []);
   useEffect6(() => {
     if (!open) return;
     transport.fetchFeedbackConfig().then(setConfig).catch(() => setConfig({ transcription: { available: false } }));
@@ -1008,7 +1289,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
   useEffect6(() => {
     if (screenRec.error) {
       setHidden(false);
-      message.warning(screenRec.error);
+      message2.warning(screenRec.error);
       noteError("screen-recording", screenRec.error);
     }
   }, [screenRec.error]);
@@ -1044,7 +1325,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
       setShot({ ...r, url: URL.createObjectURL(r.blob) });
     } catch (e) {
       if ((e == null ? void 0 : e.name) !== "NotAllowedError") {
-        message.warning(e.message || "Screenshot cancelled.");
+        message2.warning(e.message || "Screenshot cancelled.");
         noteError("exact-screenshot", e);
       }
     } finally {
@@ -1061,7 +1342,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
       if (shot == null ? void 0 : shot.url) URL.revokeObjectURL(shot.url);
       setShot({ ...r, url: URL.createObjectURL(r.blob) });
     } catch (e) {
-      message.warning(e.message || "Screenshot failed.");
+      message2.warning(e.message || "Screenshot failed.");
       noteError("screenshot", e);
     } finally {
       setCapturing(false);
@@ -1077,7 +1358,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     if (!incoming.length) return;
     const max = (config == null ? void 0 : config.maxAttachmentBytes) || 512 * 1024 * 1024;
     const ok = incoming.filter((f) => f.size <= max);
-    if (ok.length < incoming.length) message.warning("Some files were too large to attach.");
+    if (ok.length < incoming.length) message2.warning("Some files were too large to attach.");
     setFiles((prev) => [...prev, ...ok].slice(0, 10));
   };
   const onPaste = (e) => {
@@ -1191,13 +1472,13 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     const fallback = () => {
       el == null ? void 0 : el.focus();
       el == null ? void 0 : el.select();
-      message.info("Selected. Press Ctrl+C (Cmd+C on a Mac) to copy.");
+      message2.info("Selected. Press Ctrl+C (Cmd+C on a Mac) to copy.");
     };
     if (!((_a2 = navigator.clipboard) == null ? void 0 : _a2.writeText)) {
       fallback();
       return;
     }
-    navigator.clipboard.writeText(problem.copyText).then(() => message.success("Copied the report and diagnostics."), fallback);
+    navigator.clipboard.writeText(problem.copyText).then(() => message2.success("Copied the report and diagnostics."), fallback);
   };
   const problemLink = /* @__PURE__ */ jsx5("button", { type: "button", className: "kf-link", onClick: openProblem, children: "Problem with this form?" });
   const transcriptionAvailable = Boolean((_a = config == null ? void 0 : config.transcription) == null ? void 0 : _a.available);
@@ -1284,7 +1565,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
         shot ? /* @__PURE__ */ jsxs4("div", { className: "kf-shot", children: [
           /* @__PURE__ */ jsx5("img", { src: shot.url, alt: "Screenshot of the page" }),
           /* @__PURE__ */ jsxs4("div", { className: "kf-shot-actions", children: [
-            /* @__PURE__ */ jsx5(Tooltip2, { title: "Draw on it", children: /* @__PURE__ */ jsx5(Button4, { size: "small", icon: /* @__PURE__ */ jsx5(EditOutlined, {}), onClick: () => setAnnotating(true), children: "Annotate" }) }),
+            /* @__PURE__ */ jsx5(Tooltip2, { title: "Draw on it", children: /* @__PURE__ */ jsx5(Button4, { size: "small", icon: /* @__PURE__ */ jsx5(EditOutlined, {}), onClick: () => setAnnotateTarget({ kind: "shot" }), children: "Annotate" }) }),
             desktop && supportsExactCapture() && /* @__PURE__ */ jsx5(Tooltip2, { title: "Retake with exact pixels (asks to share this tab)", children: /* @__PURE__ */ jsx5(Button4, { size: "small", icon: /* @__PURE__ */ jsx5(ReloadOutlined, {}), onClick: retakeExact, children: "Retake" }) }),
             /* @__PURE__ */ jsx5(Tooltip2, { title: "Remove", children: /* @__PURE__ */ jsx5(Button4, { size: "small", danger: true, icon: /* @__PURE__ */ jsx5(DeleteOutlined2, {}), onClick: () => {
               URL.revokeObjectURL(shot.url);
@@ -1305,7 +1586,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
         /* @__PURE__ */ jsxs4(Space3, { wrap: true, children: [
           desktop && supportsExactCapture() && !screen && /* @__PURE__ */ jsx5(Button4, { size: "small", icon: /* @__PURE__ */ jsx5(VideoCameraOutlined, {}), loading: screenRec.status === "requesting", onClick: startScreenRecording, children: "Record screen" }),
           /* @__PURE__ */ jsx5(Upload, { multiple: true, showUploadList: false, beforeUpload: (f, list) => {
-            addFiles(list.length ? list : [f]);
+            if (!list.length || f === list[0]) addFiles(list.length ? list : [f]);
             return false;
           }, children: /* @__PURE__ */ jsx5(Button4, { size: "small", icon: /* @__PURE__ */ jsx5(PaperClipOutlined, {}), children: "Add files" }) })
         ] }),
@@ -1318,10 +1599,18 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
             formatMs(screen.durationMs),
             /* @__PURE__ */ jsx5("button", { type: "button", onClick: () => setScreen(null), "aria-label": "Remove recording", children: /* @__PURE__ */ jsx5(CloseOutlined2, {}) })
           ] }),
-          files.map((f, i) => /* @__PURE__ */ jsxs4("span", { className: "kf-file", children: [
+          files.map((f, i) => canAnnotate(f) ? /* @__PURE__ */ jsxs4("span", { className: "kf-file kf-file-image", children: [
+            /* @__PURE__ */ jsx5(FileThumb, { file: f }),
+            /* @__PURE__ */ jsx5("span", { className: "kf-file-name", title: f.name, children: f.name }),
+            /* @__PURE__ */ jsxs4("button", { type: "button", className: "kf-file-annotate", onClick: () => annotateFile(i, f), "aria-label": `Annotate ${f.name}`, children: [
+              /* @__PURE__ */ jsx5(EditOutlined, {}),
+              " Annotate"
+            ] }),
+            /* @__PURE__ */ jsx5("button", { type: "button", onClick: () => setFiles((p) => p.filter((_, j) => j !== i)), "aria-label": `Remove ${f.name}`, children: /* @__PURE__ */ jsx5(CloseOutlined2, {}) })
+          ] }, i) : /* @__PURE__ */ jsxs4("span", { className: "kf-file", children: [
             f.name,
             /* @__PURE__ */ jsx5("button", { type: "button", onClick: () => setFiles((p) => p.filter((_, j) => j !== i)), "aria-label": `Remove ${f.name}`, children: /* @__PURE__ */ jsx5(CloseOutlined2, {}) })
-          ] }, `${f.name}-${i}`))
+          ] }, i))
         ] }),
         /* @__PURE__ */ jsx5(Text3, { type: "secondary", style: { fontSize: 11.5 }, children: "Paste an image anywhere in this form to attach it." })
       ] })
@@ -1462,25 +1751,39 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     /* @__PURE__ */ jsx5(
       Modal,
       {
-        open: annotating && Boolean(shot),
-        onCancel: () => setAnnotating(false),
+        open: Boolean(annotateTarget) && (annotateTarget.kind === "file" || Boolean(shot)),
+        onCancel: closeAnnotator,
         footer: null,
         width: 960,
         centered: true,
         destroyOnHidden: true,
         wrapClassName: "kids-feedback-annotator-wrap",
-        title: "Annotate the screenshot",
+        title: (shownTarget == null ? void 0 : shownTarget.kind) === "file" ? "Annotate the image" : "Annotate the screenshot",
         maskClosable: false,
         zIndex: 1170,
-        children: shot && /* @__PURE__ */ jsx5(
+        children: (shownTarget == null ? void 0 : shownTarget.kind) === "file" ? /* @__PURE__ */ jsx5(
+          Annotator,
+          {
+            src: shownTarget.url,
+            doneLabel: "Use this image",
+            subject: "Image",
+            onCancel: closeAnnotator,
+            onDone: (blob) => {
+              const t = annotateTarget;
+              const next = blobToFile(blob, annotatedName(t.file.name), "image/png");
+              setFiles((p) => p.map((f, j) => j === t.index && f === t.file ? next : f));
+              closeAnnotator();
+            }
+          }
+        ) : shot && /* @__PURE__ */ jsx5(
           Annotator,
           {
             src: shot.url,
-            onCancel: () => setAnnotating(false),
+            onCancel: closeAnnotator,
             onDone: (blob) => {
               URL.revokeObjectURL(shot.url);
               setShot({ ...shot, blob, url: URL.createObjectURL(blob), annotated: true });
-              setAnnotating(false);
+              closeAnnotator();
             }
           }
         )

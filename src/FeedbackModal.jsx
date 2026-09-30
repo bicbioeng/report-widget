@@ -51,6 +51,25 @@ function Chip({ active, cls, onClick, children }) {
   return <button type="button" className={`kf-chip${active ? ` active ${cls}` : ''}`} onClick={onClick}>{children}</button>;
 }
 
+// SVGs without an intrinsic size load at 0×0, so they keep a plain chip.
+const canAnnotate = (f) => f.type.startsWith('image/') && f.type !== 'image/svg+xml';
+// photo.jpg → photo-annotated.png; photo-annotated.png stays as it is.
+const annotatedName = (name) => {
+  const base = name.replace(/\.[^./]*$/, '');
+  return base.endsWith('-annotated') ? `${base}.png` : `${base}-annotated.png`;
+};
+
+// Its own object URL, released when the file is removed or replaced.
+function FileThumb({ file }) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    const u = URL.createObjectURL(file);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file]);
+  return url ? <img className="kf-file-thumb" src={url} alt="" /> : <span className="kf-file-thumb" />;
+}
+
 export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden }) {
   const { transport, buildSha, appName, getImpersonation } = useReportConfig();
   const meta = () => pageMetadata({ buildSha, getImpersonation });
@@ -62,7 +81,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
   const [expected, setExpected] = useState('');
   const [steps, setSteps] = useState('');
   const [shot, setShot] = useState(null);       // { blob, url, width, height, method, annotated }
-  const [annotating, setAnnotating] = useState(false);
+  const [annotateTarget, setAnnotateTarget] = useState(null); // null | { kind: 'shot' } | { kind: 'file', index, file, url }
   const [capturing, setCapturing] = useState(false);
   const [voice, setVoice] = useState(null);     // { blob, mimeType, durationMs, filename, transcript, transcriptSource }
   const [screen, setScreen] = useState(null);   // { blob, mimeType, durationMs, filename }
@@ -79,6 +98,17 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
   const noteError = (stage, e) => setLastError(errorRecord(stage, e));
 
   const screenRec = useMediaRecorder({ kind: 'screen', maxMs: 2 * 60 * 1000 });
+
+  const closeAnnotator = () => {
+    if (annotateTarget?.kind === 'file') URL.revokeObjectURL(annotateTarget.url);
+    setAnnotateTarget(null);
+  };
+  const annotateFile = (index, file) => setAnnotateTarget({ kind: 'file', index, file, url: URL.createObjectURL(file) });
+  // The last target stays rendered while the modal fades out, instead of flipping to the screenshot.
+  const lastTargetRef = useRef(null);
+  if (annotateTarget) lastTargetRef.current = annotateTarget;
+  const shownTarget = annotateTarget || lastTargetRef.current;
+  useEffect(() => () => { if (lastTargetRef.current?.kind === 'file') URL.revokeObjectURL(lastTargetRef.current.url); }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -395,7 +425,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
             <div className="kf-shot">
               <img src={shot.url} alt="Screenshot of the page" />
               <div className="kf-shot-actions">
-                <Tooltip title="Draw on it"><Button size="small" icon={<EditOutlined />} onClick={() => setAnnotating(true)}>Annotate</Button></Tooltip>
+                <Tooltip title="Draw on it"><Button size="small" icon={<EditOutlined />} onClick={() => setAnnotateTarget({ kind: 'shot' })}>Annotate</Button></Tooltip>
                 {desktop && supportsExactCapture() && (
                   <Tooltip title="Retake with exact pixels (asks to share this tab)"><Button size="small" icon={<ReloadOutlined />} onClick={retakeExact}>Retake</Button></Tooltip>
                 )}
@@ -417,7 +447,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
             {desktop && supportsExactCapture() && !screen && (
               <Button size="small" icon={<VideoCameraOutlined />} loading={screenRec.status === 'requesting'} onClick={startScreenRecording}>Record screen</Button>
             )}
-            <Upload multiple showUploadList={false} beforeUpload={(f, list) => { addFiles(list.length ? list : [f]); return false; }}>
+            <Upload multiple showUploadList={false} beforeUpload={(f, list) => { if (!list.length || f === list[0]) addFiles(list.length ? list : [f]); return false; }}>
               <Button size="small" icon={<PaperClipOutlined />}>Add files</Button>
             </Upload>
           </Space>
@@ -428,11 +458,19 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
                   <button type="button" onClick={() => setScreen(null)} aria-label="Remove recording"><CloseOutlined /></button>
                 </span>
               )}
-              {files.map((f, i) => (
-                <span className="kf-file" key={`${f.name}-${i}`}>{f.name}
+              {/* Keyed by index: a replaced file gets a new name, and remounting would lose focus on Annotate. */}
+              {files.map((f, i) => (canAnnotate(f) ? (
+                <span className="kf-file kf-file-image" key={i}>
+                  <FileThumb file={f} />
+                  <span className="kf-file-name" title={f.name}>{f.name}</span>
+                  <button type="button" className="kf-file-annotate" onClick={() => annotateFile(i, f)} aria-label={`Annotate ${f.name}`}><EditOutlined /> Annotate</button>
                   <button type="button" onClick={() => setFiles((p) => p.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`}><CloseOutlined /></button>
                 </span>
-              ))}
+              ) : (
+                <span className="kf-file" key={i}>{f.name}
+                  <button type="button" onClick={() => setFiles((p) => p.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`}><CloseOutlined /></button>
+                </span>
+              )))}
             </div>
           )}
           <Text type="secondary" style={{ fontSize: 11.5 }}>Paste an image anywhere in this form to attach it.</Text>
@@ -567,26 +605,40 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
       </Modal>
 
       <Modal
-        open={annotating && Boolean(shot)}
-        onCancel={() => setAnnotating(false)}
+        open={Boolean(annotateTarget) && (annotateTarget.kind === 'file' || Boolean(shot))}
+        onCancel={closeAnnotator}
         footer={null}
         width={960}
         centered
         destroyOnHidden
         wrapClassName="kids-feedback-annotator-wrap"
-        title="Annotate the screenshot"
+        title={shownTarget?.kind === 'file' ? 'Annotate the image' : 'Annotate the screenshot'}
         // A stray click on the mask must not throw the drawing away.
         maskClosable={false}
         zIndex={1170}
       >
-        {shot && (
+        {shownTarget?.kind === 'file' ? (
+          <Annotator
+            src={shownTarget.url}
+            doneLabel="Use this image"
+            subject="Image"
+            onCancel={closeAnnotator}
+            onDone={(blob) => {
+              const t = annotateTarget;
+              const next = blobToFile(blob, annotatedName(t.file.name), 'image/png');
+              // By identity too, so a stale index can never overwrite another file.
+              setFiles((p) => p.map((f, j) => (j === t.index && f === t.file ? next : f)));
+              closeAnnotator();
+            }}
+          />
+        ) : shot && (
           <Annotator
             src={shot.url}
-            onCancel={() => setAnnotating(false)}
+            onCancel={closeAnnotator}
             onDone={(blob) => {
               URL.revokeObjectURL(shot.url);
               setShot({ ...shot, blob, url: URL.createObjectURL(blob), annotated: true });
-              setAnnotating(false);
+              closeAnnotator();
             }}
           />
         )}
