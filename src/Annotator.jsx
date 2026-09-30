@@ -1,14 +1,16 @@
 /**
- * Screenshot annotator — rectangle, arrow, pen, blur and text on a canvas.
+ * Image annotator — rectangle, arrow, pen, blur and text on a canvas.
  * Hand-rolled: the marker libraries are watermarked or paid, and the tools a
  * bug reporter needs fit in one file.
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Input, Space, Tooltip } from 'antd';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Button, Input, Space, Tooltip, message } from 'antd';
 import {
   BorderOutlined, ArrowRightOutlined, HighlightOutlined, EyeInvisibleOutlined,
-  FontSizeOutlined, UndoOutlined, CheckOutlined, CloseOutlined,
+  FontSizeOutlined, UndoOutlined, CheckOutlined, CloseOutlined, DragOutlined,
+  ZoomInOutlined, ZoomOutOutlined,
 } from '@ant-design/icons';
+import { clampZoom, maxZoomFor, stepZoom, clientToImage, imageCoordAt, scrollToAnchor, heldAnchor, textBoxRect, spaceActivates, withPendingText, takeOnce, exportErrorText } from './annotatorMath.js';
 
 const COLORS = ['#ef4444', '#f59e0b', '#22c55e', '#3b82f6', '#0f172a', '#ffffff'];
 const TOOLS = [
@@ -17,7 +19,9 @@ const TOOLS = [
   { key: 'pen', label: 'Draw', icon: <HighlightOutlined /> },
   { key: 'blur', label: 'Blur', icon: <EyeInvisibleOutlined /> },
   { key: 'text', label: 'Text', icon: <FontSizeOutlined /> },
+  { key: 'move', label: 'Move', icon: <DragOutlined /> },
 ];
+const isTyping = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
 
 function drawShape(ctx, s, blurred, lineScale) {
   ctx.save();
@@ -56,18 +60,39 @@ function drawShape(ctx, s, blurred, lineScale) {
   ctx.restore();
 }
 
-export default function Annotator({ src, onDone, onCancel }) {
+export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this screenshot', subject = 'Screenshot' }) {
   const canvasRef = useRef(null);
   const stageRef = useRef(null);
+  const wrapRef = useRef(null);
   const imgRef = useRef(null);
   const blurRef = useRef(null);
   const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false); // HEIC, a corrupt paste…
   const [tool, setTool] = useState('rect');
   const [color, setColor] = useState(COLORS[0]);
   const [shapes, setShapes] = useState([]);
   const [draft, setDraft] = useState(null);
   const [textAt, setTextAt] = useState(null); // { x, y, cx, cy }
   const [textValue, setTextValue] = useState('');
+  const [exporting, setExporting] = useState(false);
+  // zoom multiplies the fit scale (1 = Fit); the backing store always stays at natural size.
+  const [zoom, setZoom] = useState(1);
+  const [fit, setFit] = useState(1);
+  const [panReady, setPanReady] = useState(false); // Space held
+  const [panning, setPanning] = useState(false);
+  const panRef = useRef(null); // { x, y, sl, st } while a pan drag is in progress
+  const anchorRef = useRef(null); // { px, py, ix, iy } — keep image point ix/iy (natural px) under client point px/py
+  const lastAnchorRef = useRef(null); // the last anchor plus the scroll it produced { px, py, ix, iy, sl, st } — see heldAnchor
+  const zoomRef = useRef(1);
+  const keysRef = useRef(null);
+  const tabFocusRef = useRef(null); // element focused by Tab, the only one Space presses
+  const draftRef = useRef(null);
+  draftRef.current = draft;
+  const shapesRef = useRef(shapes);
+  shapesRef.current = shapes;
+  // Commit paths (Enter, blur, zoom, pan, finish) can fire in one tick; the first to take this wins.
+  const textAtRef = useRef(textAt);
+  textAtRef.current = textAt;
 
   useEffect(() => {
     const img = new Image();
@@ -85,6 +110,7 @@ export default function Annotator({ src, onDone, onCancel }) {
       blurRef.current = b;
       setReady(true);
     };
+    img.onerror = () => setFailed(true);
     img.src = src;
   }, [src]);
 
@@ -103,16 +129,148 @@ export default function Annotator({ src, onDone, onCancel }) {
 
   useEffect(() => { if (ready) render(); }, [ready, render]);
 
+  // Fit = the whole image inside the stage, never enlarged (the old max-width/max-height behaviour).
+  useEffect(() => {
+    const stage = stageRef.current;
+    const img = imgRef.current;
+    if (!ready || !stage || !img) return undefined;
+    // offsetWidth/Height include scrollbars, so the fit doesn't shift when zooming shows them.
+    const measure = () => setFit(Math.min(1, stage.offsetWidth / img.naturalWidth, stage.offsetHeight / img.naturalHeight));
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(stage);
+    return () => ro.disconnect();
+  }, [ready]);
+
+  const natW = imgRef.current?.naturalWidth || 0;
+  const natH = imgRef.current?.naturalHeight || 0;
+  const scale = fit * zoom; // display px per image px
+  const maxZoom = maxZoomFor(fit);
+  const dispW = Math.floor(natW * scale);
+  const dispH = Math.floor(natH * scale);
+  const textBox = textAt && textBoxRect(textAt.cx, textAt.cy, dispW, dispH);
+
+  // After the new size is committed, scroll so the anchored image point is back under the pointer.
+  useLayoutEffect(() => {
+    const a = anchorRef.current;
+    const stage = stageRef.current;
+    const wrap = wrapRef.current;
+    anchorRef.current = null;
+    if (!a || !stage || !wrap || !imgRef.current) return;
+    const r = wrap.getBoundingClientRect();
+    const img = imgRef.current;
+    stage.scrollLeft = scrollToAnchor(stage.scrollLeft, r.left, r.width, img.naturalWidth, a.ix, a.px);
+    stage.scrollTop = scrollToAnchor(stage.scrollTop, r.top, r.height, img.naturalHeight, a.iy, a.py);
+    lastAnchorRef.current = { ...a, sl: stage.scrollLeft, st: stage.scrollTop };
+  }, [zoom, fit]);
+
+  const commitText = () => {
+    const at = takeOnce(textAtRef);
+    if (!at) return;
+    setShapes((s) => withPendingText(s, at, textValue, color));
+    setTextAt(null);
+    setTextValue('');
+  };
+
+  // Zoom to `next` (clamped), keeping the image point under client (px, py) fixed; default anchor is the visible centre.
+  const zoomTo = (next, px, py) => {
+    const stage = stageRef.current;
+    const wrap = wrapRef.current;
+    if (!ready || !stage || !wrap) return;
+    const z = clampZoom(next, maxZoom);
+    if (z === zoomRef.current) return;
+    if (textAt) commitText();
+    if (px == null) {
+      const sr = stage.getBoundingClientRect();
+      px = sr.left + stage.clientWidth / 2;
+      py = sr.top + stage.clientHeight / 2;
+    }
+    const held = heldAnchor(lastAnchorRef.current, px, py, stage.scrollLeft, stage.scrollTop);
+    const r = wrap.getBoundingClientRect();
+    anchorRef.current = held
+      ? { px, py, ...held }
+      : { px, py, ix: imageCoordAt(px, r.left, r.width, natW), iy: imageCoordAt(py, r.top, r.height, natH) };
+    zoomRef.current = z;
+    setZoom(z);
+  };
+  const zoomIn = () => zoomTo(stepZoom(zoomRef.current, fit, 1));
+  const zoomOut = () => zoomTo(stepZoom(zoomRef.current, fit, -1));
+  const zoomFit = () => zoomTo(1);
+  keysRef.current = { zoomIn, zoomOut, zoomFit, zoomTo };
+
+  // Ctrl/⌘+wheel and trackpad pinch (wheel + ctrlKey). Native and non-passive so the page itself doesn't zoom.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return undefined;
+    const onWheel = (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      keysRef.current.zoomTo(zoomRef.current * Math.exp(-dy * 0.01), e.clientX, e.clientY);
+    };
+    stage.addEventListener('wheel', onWheel, { passive: false });
+    return () => stage.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // + / − / 0 zoom; Space held turns any drag into a pan. Ignored while typing.
+  useEffect(() => {
+    let tabbing = false;
+    const onKeyDown = (e) => {
+      tabbing = e.key === 'Tab';
+      if (isTyping(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === ' ') {
+        if (spaceActivates(e.target, tabFocusRef.current)) return;
+        e.preventDefault();
+        if (!e.repeat) setPanReady(true);
+      } else if (e.key === '+' || e.key === '=') { e.preventDefault(); keysRef.current.zoomIn(); }
+      else if (e.key === '-') { e.preventDefault(); keysRef.current.zoomOut(); }
+      else if (e.key === '0') { e.preventDefault(); keysRef.current.zoomFit(); }
+    };
+    const onKeyUp = (e) => {
+      if (e.key !== ' ' || isTyping(e.target) || spaceActivates(e.target, tabFocusRef.current)) return;
+      e.preventDefault();
+      setPanReady(false);
+    };
+    const onFocusIn = (e) => { tabFocusRef.current = tabbing ? e.target : null; };
+    // A click ends keyboard focus even where focus doesn't move (the canvas prevents default), so Space pans again.
+    const onPointerDown = () => { tabbing = false; tabFocusRef.current = null; };
+    const onBlur = () => setPanReady(false);
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('focusin', onFocusIn);
+    window.addEventListener('keyup', onKeyUp, true);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('focusin', onFocusIn);
+      window.removeEventListener('keyup', onKeyUp, true);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, []);
+
+  // Clamped to the image, so a drag that leaves the stage ends on the image edge.
   const toCanvas = (e) => {
     const c = canvasRef.current;
     const r = c.getBoundingClientRect();
-    const x = ((e.clientX - r.left) / r.width) * c.width;
-    const y = ((e.clientY - r.top) / r.height) * c.height;
+    const { x, y } = clientToImage(e.clientX, e.clientY, r, c.width, c.height);
     return { x, y, cx: e.clientX - r.left, cy: e.clientY - r.top };
   };
 
+  // Pointer handlers live on the stage (and capture to it) so pans work over the dark margin too.
   const onPointerDown = (e) => {
-    if (!ready || textAt) return;
+    if (!ready || e.target.closest?.('.kf-text-input')) return;
+    const stage = stageRef.current;
+    if (((tool === 'move' || panReady) && e.button === 0) || e.button === 1) {
+      e.preventDefault();
+      if (textAt) commitText();
+      panRef.current = { x: e.clientX, y: e.clientY, sl: stage.scrollLeft, st: stage.scrollTop };
+      setPanning(true);
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      return;
+    }
+    if (textAt || e.button !== 0 || e.target !== canvasRef.current) return;
     e.preventDefault();
     const p = toCanvas(e);
     if (tool === 'text') { setTextAt(p); setTextValue(''); return; }
@@ -121,37 +279,56 @@ export default function Annotator({ src, onDone, onCancel }) {
     else setDraft({ type: tool, color, x1: p.x, y1: p.y, x2: p.x, y2: p.y });
   };
   const onPointerMove = (e) => {
+    const pan = panRef.current;
+    if (pan) {
+      const stage = stageRef.current;
+      stage.scrollLeft = pan.sl - (e.clientX - pan.x);
+      stage.scrollTop = pan.st - (e.clientY - pan.y);
+      return;
+    }
     if (!draft) return;
     const p = toCanvas(e);
     setDraft((d) => (d.type === 'pen' ? { ...d, points: [...d.points, { x: p.x, y: p.y }] } : { ...d, x2: p.x, y2: p.y }));
   };
+  // Also bound to pointercancel and lostpointercapture, which follows pointerup — draftRef stops a double commit.
   const onPointerUp = () => {
-    if (!draft) return;
-    const tooSmall = draft.type !== 'pen' && Math.abs(draft.x2 - draft.x1) < 3 && Math.abs(draft.y2 - draft.y1) < 3;
-    if (!tooSmall) setShapes((s) => [...s, draft]);
+    if (panRef.current) { panRef.current = null; setPanning(false); return; }
+    const d = draftRef.current;
+    if (!d) return;
+    draftRef.current = null;
+    const tooSmall = d.type !== 'pen' && Math.abs(d.x2 - d.x1) < 3 && Math.abs(d.y2 - d.y1) < 3;
+    if (!tooSmall) setShapes((s) => [...s, d]);
     setDraft(null);
   };
 
-  const commitText = () => {
-    if (textAt && textValue.trim()) setShapes((s) => [...s, { type: 'text', color, x: textAt.x, y: textAt.y, text: textValue.trim() }]);
+  // Draws the committed shapes (and any open text) synchronously, without the draft, then exports at natural size.
+  const finish = () => {
+    const c = canvasRef.current;
+    const img = imgRef.current;
+    if (exporting || !c || !img) return;
+    const all = withPendingText(shapesRef.current, takeOnce(textAtRef), textValue, color);
     setTextAt(null);
     setTextValue('');
-  };
-
-  const finish = () => {
+    setShapes(all);
+    draftRef.current = null;
     setDraft(null);
-    // Render without the draft, then export.
-    requestAnimationFrame(() => {
-      render();
-      canvasRef.current.toBlob((blob) => onDone(blob), 'image/png');
-    });
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.drawImage(img, 0, 0);
+    for (const s of all) drawShape(ctx, s, blurRef.current, lineScale);
+    setExporting(true);
+    c.toBlob((blob) => {
+      if (blob) { onDone(blob); return; }
+      setExporting(false);
+      message.error(exportErrorText(subject));
+    }, 'image/png');
   };
 
   return (
     <div className="kf-annotator">
-      <div className="kf-tools">
+      <div className="kf-tools" role="toolbar" aria-label="Markup tools">
         {TOOLS.map((t) => (
-          <button key={t.key} type="button" className={`kf-tool${tool === t.key ? ' active' : ''}`} onClick={() => setTool(t.key)}>
+          <button key={t.key} type="button" className={`kf-tool${tool === t.key ? ' active' : ''}`} aria-pressed={tool === t.key} disabled={t.key === 'move' && !ready} onClick={() => setTool(t.key)}>
             {t.icon} {t.label}
           </button>
         ))}
@@ -162,36 +339,66 @@ export default function Annotator({ src, onDone, onCancel }) {
           </Tooltip>
         ))}
         <span style={{ flex: 1 }} />
+        <span className="kf-zoom" role="group" aria-label="Zoom">
+          <Tooltip title="Zoom out (−)">
+            <button type="button" aria-label="Zoom out" disabled={!ready || zoom <= 1} onClick={zoomOut}><ZoomOutOutlined /></button>
+          </Tooltip>
+          <span className="kf-zoom-pct" aria-live="polite">{ready ? `${Math.round(scale * 100)}%` : '—'}</span>
+          <Tooltip title="Zoom in (+)">
+            <button type="button" aria-label="Zoom in" disabled={!ready || zoom >= maxZoom} onClick={zoomIn}><ZoomInOutlined /></button>
+          </Tooltip>
+          <Tooltip title="Fit to window (0)">
+            <button type="button" aria-label="Fit to window" disabled={!ready || zoom === 1} onClick={zoomFit}>Fit</button>
+          </Tooltip>
+        </span>
         <Button size="small" icon={<UndoOutlined />} disabled={!shapes.length} onClick={() => setShapes((s) => s.slice(0, -1))}>Undo</Button>
       </div>
-      <div className="kf-stage" ref={stageRef}>
-        <canvas
-          ref={canvasRef}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerLeave={onPointerUp}
-        />
-        {textAt && (
-          <div className="kf-text-input" style={{ left: textAt.cx, top: textAt.cy - 18 }}>
-            <Input
-              autoFocus
-              size="small"
-              value={textValue}
-              placeholder="Type, then Enter"
-              style={{ width: 200 }}
-              onChange={(e) => setTextValue(e.target.value)}
-              onPressEnter={commitText}
-              onBlur={commitText}
-              onKeyDown={(e) => { if (e.key === 'Escape') { setTextAt(null); setTextValue(''); } }}
-            />
-          </div>
-        )}
+      <div
+        className={`kf-stage${panReady || tool === 'move' ? ' kf-pan-ready' : ''}${panning ? ' kf-panning' : ''}`}
+        ref={stageRef}
+        tabIndex={0}
+        aria-label="Image area. Use the arrow keys to scroll when zoomed in."
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onLostPointerCapture={onPointerUp}
+        onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+      >
+        <div className="kf-canvas-wrap" ref={wrapRef} style={failed ? { display: 'none' } : undefined}>
+          <canvas
+            ref={canvasRef}
+            role="img"
+            aria-label={`${subject} you are annotating`}
+            style={ready ? { width: dispW, height: dispH } : undefined}
+          />
+          {textAt && (
+            <div className="kf-text-input" style={{ left: textBox.left, top: textBox.top }}>
+              <Input
+                autoFocus
+                size="small"
+                value={textValue}
+                placeholder="Type, then Enter"
+                style={{ width: textBox.width }}
+                onChange={(e) => setTextValue(e.target.value)}
+                onPressEnter={commitText}
+                onBlur={commitText}
+                // Esc cancels only the text box — without stopPropagation the Modal closes and drops every mark.
+                onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); textAtRef.current = null; setTextAt(null); setTextValue(''); } }}
+              />
+            </div>
+          )}
+        </div>
+        {failed && <div className="kf-stage-error">This image can't be opened for markup. It will still be attached as it is.</div>}
       </div>
-      <Space style={{ justifyContent: 'flex-end', width: '100%' }}>
-        <Button icon={<CloseOutlined />} onClick={onCancel}>Cancel</Button>
-        <Button type="primary" icon={<CheckOutlined />} onClick={finish} disabled={!ready}>Use this screenshot</Button>
-      </Space>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {zoom > 1 && <span className="kf-zoom-hint">Hold Space and drag to move around. Pinch or Ctrl + scroll to zoom.</span>}
+        <span style={{ flex: 1 }} />
+        <Space>
+          <Button icon={<CloseOutlined />} onClick={onCancel}>Cancel</Button>
+          <Button type="primary" icon={<CheckOutlined />} onClick={finish} disabled={!ready || exporting} loading={exporting}>{doneLabel}</Button>
+        </Space>
+      </div>
     </div>
   );
 }
