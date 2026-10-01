@@ -41,6 +41,8 @@ __export(src_exports, {
   RouteRecorder: () => RouteRecorder,
   STATE_COLORS: () => STATE_COLORS,
   STATE_LABELS: () => STATE_LABELS,
+  StatusIcon: () => StatusIcon,
+  StatusLabel: () => StatusLabel,
   WIDGET_VERSION: () => WIDGET_VERSION,
   buildDiagnostics: () => buildDiagnostics,
   buildReportToolPayload: () => buildReportToolPayload,
@@ -1055,6 +1057,21 @@ var { Text: Text2 } = import_antd3.Typography;
 var STATE_COLORS = { new: "blue", acknowledged: "geekblue", in_progress: "gold", testing: "cyan", done: "green", dismissed: "default" };
 var STATE_LABELS = { new: "New", acknowledged: "Acknowledged", in_progress: "In progress", testing: "Testing", done: "Done", dismissed: "Dismissed" };
 var KIND_LABELS = { bug: "Bug", idea: "Idea", question: "Question", "report-tool": "Report tool" };
+var FILL = { in_progress: 0.5, testing: 0.75 };
+var C = 2 * Math.PI * 3;
+function StatusIcon({ state: state2 }) {
+  const done = state2 === "done";
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("svg", { className: `kf-st kf-st--${state2}`, width: "16", height: "16", viewBox: "0 0 16 16", "aria-hidden": "true", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("circle", { cx: "8", cy: "8", r: "6.5", fill: done ? "currentColor" : "none", stroke: "currentColor", strokeWidth: "1.5", strokeDasharray: state2 === "new" ? "2.2 1.9" : void 0 }),
+    FILL[state2] && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("circle", { cx: "8", cy: "8", r: "3", fill: "none", stroke: "currentColor", strokeWidth: "6", strokeDasharray: `${FILL[state2] * C} ${C}`, transform: "rotate(-90 8 8)" }),
+    done && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("path", { d: "M5 8.2l2 2 4-4.2", fill: "none", stroke: "#fff", strokeWidth: "1.6", strokeLinecap: "round", strokeLinejoin: "round" }),
+    state2 === "dismissed" && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("path", { d: "M5.8 5.8l4.4 4.4M10.2 5.8l-4.4 4.4", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" })
+  ] });
+}
+var StatusLabel = ({ state: state2 }) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { className: "kf-status", children: [
+  /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(StatusIcon, { state: state2 }),
+  /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: `kf-st-label kf-st--${state2}`, children: STATE_LABELS[state2] || state2 })
+] });
 function relTime(iso) {
   const d = new Date(iso);
   const s = Math.round((Date.now() - d.getTime()) / 1e3);
@@ -1084,10 +1101,12 @@ function MyReports({ onOpenTicket, refreshKey }) {
     items.map((r) => {
       var _a;
       return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "kf-report", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(import_antd3.Tag, { color: STATE_COLORS[r.triageState] || "default", style: { margin: 0 }, children: STATE_LABELS[r.triageState] || r.triageState }),
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(StatusIcon, { state: r.triageState }),
         /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: { minWidth: 0 }, children: [
           /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { className: "t", style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: ((_a = r.ticket) == null ? void 0 : _a.title) || r.summary }),
           /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "s", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: `kf-st-label kf-st--${r.triageState}`, children: STATE_LABELS[r.triageState] || r.triageState }),
+            " \xB7 ",
             KIND_LABELS[r.kind] || r.kind,
             " \xB7 ",
             relTime(r.createdAt),
@@ -1433,7 +1452,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.8.1";
+var WIDGET_VERSION = "1.9.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT = 280;
@@ -1967,7 +1986,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("span", { className: "kf-included", children: [
       "We'll also include the page, your account, browser and recent errors.",
       " ",
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Popover, { content: includedPopover, title: "What gets included", trigger: "click", placement: "topLeft", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("a", { children: "view" }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Popover, { rootClassName: "kf-pop", content: includedPopover, title: "What gets included", trigger: "click", placement: "topLeft", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("a", { children: "view" }) }),
       /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { className: "kf-sep", children: "\xB7" }),
       problemLink
     ] }),
@@ -2058,10 +2077,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
         zIndex: 1160,
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { className: "kf-head", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h3", { children: problem ? "Problem with this form" : "Report a bug or share an idea" }),
-              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { children: (config == null ? void 0 : config.project) ? `Goes straight to the ${appName} team as a ticket in ${config.project.name}.` : `Goes straight to the ${appName} team as a ticket.` })
-            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h3", { children: problem ? "Problem with this form" : "Report a bug or share an idea" }) }),
             /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_antd4.Space, { children: [
               !problem && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
                 import_antd4.Tabs,
@@ -2289,6 +2305,8 @@ function RouteRecorder({ pathname }) {
   RouteRecorder,
   STATE_COLORS,
   STATE_LABELS,
+  StatusIcon,
+  StatusLabel,
   WIDGET_VERSION,
   buildDiagnostics,
   buildReportToolPayload,
