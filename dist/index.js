@@ -1070,7 +1070,11 @@ var SCROLLING = /* @__PURE__ */ new Set(["auto", "scroll", "overlay"]);
 function bodyScroller(body, scrollingElement, getStyle) {
   if (body === scrollingElement) return null;
   const s = getStyle(body);
-  const overflows = SCROLLING.has(s.overflowY) && body.scrollHeight > body.clientHeight || SCROLLING.has(s.overflowX) && body.scrollWidth > body.clientWidth;
+  const html = body.parentElement;
+  const h = html ? getStyle(html) : null;
+  const propagated = Boolean(h) && h.overflowX === "visible" && h.overflowY === "visible";
+  const clipsY = SCROLLING.has(s.overflowY) || propagated && (s.overflowY === "hidden" || s.overflowY === "clip");
+  const overflows = clipsY && body.scrollHeight > body.clientHeight || SCROLLING.has(s.overflowX) && body.scrollWidth > body.clientWidth;
   if (!body.scrollTop && !body.scrollLeft && !overflows) return null;
   return {
     left: body.scrollLeft,
@@ -1292,7 +1296,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.6.0";
+var WIDGET_VERSION = "1.7.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT = 280;

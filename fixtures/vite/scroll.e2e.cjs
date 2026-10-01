@@ -1,6 +1,8 @@
-// Proof for BNFR-207: the quick screenshot is what is on screen, whether the
-// document scrolls (KIDS, BNERC), the body does, or GeDB's body/html
-// height:100% style is in place. Each capture is compared with page.screenshot.
+// Proof for BNFR-207 and BNFR-222: the quick screenshot is what is on screen,
+// whether the document scrolls (KIDS, BNERC), the body does, GeDB's body/html
+// height:100% style is in place, or html and body are both height:100% so <html>
+// scrolls and the Report dialog's antd scroll lock is on (fullheight, the
+// reporter's Home page). Each capture is compared with page.screenshot.
 // npx vite build && npx vite preview --port 4817, then:
 //   PLAYWRIGHT=/path/to/node_modules/playwright SHOTS=/some/dir node scroll.e2e.cjs
 const { chromium } = require(process.env.PLAYWRIGHT || 'playwright');
@@ -18,7 +20,7 @@ const isWhite = (c) => c.every((v) => v >= 250);
   const browser = await chromium.launch();
   const failures = [];
   let runs = 0;
-  for (const model of ['gedb', 'body', 'document']) {
+  for (const model of ['fullheight', 'gedb', 'body', 'document']) {
     for (const width of [1440, 878, 390]) {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       const pageErrors = [];

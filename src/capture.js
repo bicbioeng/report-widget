@@ -170,11 +170,24 @@ const SCROLLING = new Set(['auto', 'scroll', 'overlay']);
 // document.scrollingElement (in quirks mode the body is the scrollingElement
 // and its scrollTop is the document's), or its overflow went to the viewport
 // (html overflow visible) but the copy keeps it, so a height:100% body would
-// be cut off at one window height. null otherwise.
+// be cut off at one window height. That last case is not only GeDB's
+// overflow-y:auto: an antd Modal (the Report dialog) locks scrolling with
+// `html body { overflow-y: hidden }`, so with html and body height:100% the
+// page stays scrolled on <html> but the copy is clipped to the first window.
+// The offsets are then 0, as the document scroll is already in the body rect.
+// Only the vertical axis counts hidden/clip, and only while html's overflow is
+// visible: a body overflow-x:hidden clips on screen too, and with html
+// overflow:hidden the body really clips, so growing the copy would not match.
+// null otherwise.
 function bodyScroller(body, scrollingElement, getStyle) {
   if (body === scrollingElement) return null;
   const s = getStyle(body);
-  const overflows = (SCROLLING.has(s.overflowY) && body.scrollHeight > body.clientHeight)
+  const html = body.parentElement;
+  const h = html ? getStyle(html) : null;
+  const propagated = Boolean(h) && h.overflowX === 'visible' && h.overflowY === 'visible';
+  const clipsY = SCROLLING.has(s.overflowY)
+    || (propagated && (s.overflowY === 'hidden' || s.overflowY === 'clip'));
+  const overflows = (clipsY && body.scrollHeight > body.clientHeight)
     || (SCROLLING.has(s.overflowX) && body.scrollWidth > body.clientWidth);
   if (!body.scrollTop && !body.scrollLeft && !overflows) return null;
   return {
@@ -200,7 +213,8 @@ function canvasBackground() {
  * scrolled root's visible window instead: it clips the clone, wraps its
  * children in a div translated by -scroll and moves inline absolute/fixed
  * descendants by +scroll. Both are undone here, so the scroll is applied once,
- * by the crop.
+ * by the crop. A body whose overflow went to the viewport has no wrapper; its
+ * copy just grows to the content size.
  */
 function unscrollRootClone(rootClone, scroller) {
   const st = rootClone.style;
@@ -227,9 +241,10 @@ function unscrollRootClone(rootClone, scroller) {
  * What captureQuick measures before rendering, with the live globals passed in
  * so node --test can drive it with plain objects. Returns `scroller` (the
  * body's own scroll offsets and content size, or null when the document
- * scrolls), `pad` and `frame` (see coverViewportOrigin), `rootScroll` (the
- * offset pinViewportPositioned moves root-relative pins by) and the viewport
- * size.
+ * scrolls and the copy would not clip; offsets 0 and the content size when
+ * html scrolls past a one-window body that clips), `pad` and `frame` (see
+ * coverViewportOrigin), `rootScroll` (the offset pinViewportPositioned moves
+ * root-relative pins by) and the viewport size.
  */
 export function quickCaptureGeometry({
   body, scrollingElement, viewportWidth, viewportHeight, getStyle = (el) => getComputedStyle(el),

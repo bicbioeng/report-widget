@@ -430,3 +430,90 @@ test('quirks mode: body is the scrollingElement, so the crop follows the body re
   const r = viewportCropRect({ bodyRect: g.frame, viewportWidth: 1024, viewportHeight: 768, scale: 1, imageWidth: 1024, imageHeight: 6000 });
   assert.deepEqual([r.sy, r.sh, r.outWidth, r.outHeight], [1200, 768, 1024, 768]);
 });
+
+// The reporter's Home page with the Report dialog open: html, body { height:
+// 100% } and <html> scrolled 1800, then antd's Modal locks scrolling with
+// `html body { overflow-y: hidden }` (overflow-x then computes to auto). The
+// hidden goes to the viewport, so the page stays scrolled and shows its content,
+// but snapdom's copy of the one-window body keeps it and clips everything below
+// the first window: the old crop at 1800 was only the background fill.
+const fakeHtml = (overflow = 'visible') => fakeEl('html', { style: { overflowX: overflow, overflowY: overflow } });
+const fullHeightBody = (W, H, scrollY, html = fakeHtml()) => ({
+  ...fakeEl('body', { rect: { left: 0, top: -scrollY, width: W, height: H }, parent: html }),
+  scrollTop: 0, scrollLeft: 0, scrollHeight: 6000, scrollWidth: W, clientHeight: H, clientWidth: W,
+});
+const bodyOverflow = (body) => (el) => (el.name === 'body' ? { ...el.computed, ...body } : el.computed);
+const lockedStyle = bodyOverflow({ overflowY: 'hidden', overflowX: 'auto' });
+
+for (const W of [1440, 878]) {
+  test(`Report dialog open, html scrolled 1800 past a one-window body at ${W}x878: crop starts 1800px down the content`, () => {
+    const body = fullHeightBody(W, 878, 1800);
+    const html = { scrollTop: 1800, scrollLeft: 0 };
+    const g = quickCaptureGeometry({ body, scrollingElement: html, viewportWidth: W, viewportHeight: 878, getStyle: lockedStyle });
+    assert.deepEqual(g.scroller, { left: 0, top: 0, width: W, height: 6000, sideways: false });
+    assert.deepEqual(g.rootScroll, { left: 0, top: 0 });
+    assert.deepEqual(g.pad, { left: 0, top: 0 });
+    assert.deepEqual(g.frame, { left: 0, top: -1800, width: W, height: 6000 });
+    for (const scale of [1, 2]) {
+      const r = viewportCropRect({ bodyRect: g.frame, viewportWidth: W, viewportHeight: 878, scale, imageWidth: W * scale, imageHeight: 6000 * scale });
+      assert.deepEqual([r.sy, r.sh, r.dy, r.dh], [1800 * scale, 878 * scale, 0, 878 * scale]);
+      assert.deepEqual([r.sx, r.sw, r.dx, r.dw], [0, W * scale, 0, W * scale]);
+      assert.deepEqual([r.outWidth, r.outHeight], [W * scale, 878 * scale]);
+    }
+  });
+}
+
+for (const overflowY of ['hidden', 'clip']) {
+  test(`a one-window body with overflow-y ${overflowY} past its box gets a scroller, so its copy is unclipped`, () => {
+    const body = fullHeightBody(1440, 878, 1800);
+    const getStyle = bodyOverflow({ overflowY, overflowX: overflowY === 'clip' ? 'visible' : 'auto' });
+    const g = quickCaptureGeometry({ body, scrollingElement: { scrollTop: 1800 }, viewportWidth: 1440, viewportHeight: 878, getStyle });
+    assert.deepEqual(g.scroller, { left: 0, top: 0, width: 1440, height: 6000, sideways: false });
+  });
+}
+
+test('Report dialog open over a one-window body: the fixed header lands at the top of the screenshot', () => {
+  const body = fullHeightBody(1440, 878, 1800);
+  const nav = fakeEl('nav', { rect: { left: 0, top: 0, width: 1440, height: 60 }, style: { position: 'fixed' }, parent: body });
+  const copies = { body: fakeCopy('body'), nav: fakeCopy('nav') };
+  const nodeMap = new Map([[copies.body, body], [copies.nav, nav]]);
+  const g = quickCaptureGeometry({ body, scrollingElement: { scrollTop: 1800 }, viewportWidth: 1440, viewportHeight: 878, getStyle: lockedStyle });
+  assert.deepEqual(g.frame, { left: 0, top: -1800, width: 1440, height: 6000 });
+  pinViewportPositioned({ root: body, rootClone: copies.body, nodeMap, rootScroll: g.rootScroll, getStyle: lockedStyle });
+  const r = viewportCropRect({ bodyRect: g.frame, viewportWidth: 1440, viewportHeight: 878, scale: 1, imageWidth: 1440, imageHeight: 6000 });
+  assert.equal(copies.nav.style.top, '1800px');
+  assert.equal(parseFloat(copies.nav.style.top), r.sy);
+  assert.equal(r.dy, 0);
+});
+
+test('a one-window body with overflow visible needs no scroller: its copy spills like the page', () => {
+  const body = fullHeightBody(1440, 878, 1800);
+  const getStyle = bodyOverflow({ overflowY: 'visible', overflowX: 'visible' });
+  const g = quickCaptureGeometry({ body, scrollingElement: { scrollTop: 1800 }, viewportWidth: 1440, viewportHeight: 878, getStyle });
+  assert.equal(g.scroller, null);
+  // Given an image of the whole content, the crop finds what is on screen.
+  const r = viewportCropRect({ bodyRect: g.frame, viewportWidth: 1440, viewportHeight: 878, scale: 1, imageWidth: 1440, imageHeight: 6000 });
+  assert.deepEqual([r.sy, r.sh, r.dy, r.dh], [1800, 878, 0, 878]);
+});
+
+test('Report dialog open while the document scrolls a full-height body (KIDS): no scroller', () => {
+  const body = { ...fullHeightBody(1440, 6000, 1800), clientHeight: 6000 };
+  const g = quickCaptureGeometry({ body, scrollingElement: { scrollTop: 1800 }, viewportWidth: 1440, viewportHeight: 878, getStyle: lockedStyle });
+  assert.equal(g.scroller, null);
+  assert.deepEqual(g.frame, { left: 0, top: -1800, width: 1440, height: 6000 });
+});
+
+test('body overflow-x hidden over content wider than the window: no scroller, the copy keeps its width', () => {
+  const body = { ...fullHeightBody(1440, 6000, 1800), clientHeight: 6000, scrollWidth: 1800 };
+  const getStyle = bodyOverflow({ overflowY: 'visible', overflowX: 'hidden' });
+  const g = quickCaptureGeometry({ body, scrollingElement: { scrollTop: 1800 }, viewportWidth: 1440, viewportHeight: 878, getStyle });
+  assert.equal(g.scroller, null);
+  const locked = quickCaptureGeometry({ body, scrollingElement: { scrollTop: 1800 }, viewportWidth: 1440, viewportHeight: 878, getStyle: bodyOverflow({ overflowY: 'hidden', overflowX: 'hidden' }) });
+  assert.equal(locked.scroller, null);
+});
+
+test('html overflow hidden: a one-window body with overflow hidden really clips, so no scroller', () => {
+  const body = fullHeightBody(1440, 878, 0, fakeHtml('hidden'));
+  const g = quickCaptureGeometry({ body, scrollingElement: { scrollTop: 0 }, viewportWidth: 1440, viewportHeight: 878, getStyle: bodyOverflow({ overflowY: 'hidden', overflowX: 'hidden' }) });
+  assert.equal(g.scroller, null);
+});
