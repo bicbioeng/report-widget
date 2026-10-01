@@ -1,6 +1,6 @@
 {
   "name": "@bicbioeng/report-widget",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "The KIDS in-app Report widget (bug / idea / question with screenshot, annotation, voice, screen recording and captured context) as a shared React package with pluggable transports.",
   "license": "UNLICENSED",
   "type": "module",

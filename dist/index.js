@@ -970,20 +970,139 @@ function supportsExactCapture() {
   var _a;
   return typeof navigator !== "undefined" && Boolean((_a = navigator.mediaDevices) == null ? void 0 : _a.getDisplayMedia) && window.isSecureContext;
 }
+function viewportCropRect({ bodyRect, viewportWidth, viewportHeight, scale, imageWidth, imageHeight }) {
+  const outWidth = Math.round(viewportWidth * scale);
+  const outHeight = Math.round(viewportHeight * scale);
+  let k = scale;
+  if (bodyRect.width > 0) k = Math.min(k, imageWidth / bodyRect.width);
+  if (bodyRect.height > 0) k = Math.min(k, imageHeight / bodyRect.height);
+  const axis = (bodyStart, bodySize, viewSize, imageSize) => {
+    const lo = Math.max(0, -bodyStart);
+    const hi = Math.min(imageSize / k, viewSize - bodyStart);
+    const len = Math.max(0, hi - lo);
+    const src = Math.min(imageSize, Math.round(lo * k));
+    const srcSize = Math.max(0, Math.min(imageSize - src, Math.round(len * k)));
+    const dst = Math.round((lo + bodyStart) * scale);
+    const dstSize = srcSize > 0 ? Math.round(len * scale) : 0;
+    return [src, srcSize, dst, dstSize];
+  };
+  const [sx, sw, dx, dw] = axis(bodyRect.left, bodyRect.width, viewportWidth, imageWidth);
+  const [sy, sh, dy, dh] = axis(bodyRect.top, bodyRect.height, viewportHeight, imageHeight);
+  return { sx, sy, sw, sh, dx, dy, dw, dh, outWidth, outHeight };
+}
+var VIEWPORT_POSITIONED = /* @__PURE__ */ new Set(["fixed", "sticky", "-webkit-sticky"]);
+var isNone = (v) => !v || v === "none";
+var isTranslateOnly = (s) => (isNone(s.transform) || /^matrix\(\s*1\s*,\s*0\s*,\s*0\s*,\s*1\s*,/.test(s.transform)) && isNone(s.rotate) && isNone(s.scale);
+var createsContainingBlock = (s) => s.position !== "static" || !isNone(s.transform) || !isNone(s.filter) || !isNone(s.backdropFilter) || !isNone(s.perspective) || /transform|perspective|filter/.test(s.willChange || "") || /layout|paint|strict|content/.test(s.contain || "");
+var parentOf = (el) => {
+  var _a, _b;
+  return el.parentElement || ((_b = (_a = el.getRootNode) == null ? void 0 : _a.call(el)) == null ? void 0 : _b.host) || null;
+};
+function pinViewportPositioned({ root, rootClone, nodeMap, getStyle = (el) => getComputedStyle(el) }) {
+  if (!root || !(rootClone == null ? void 0 : rootClone.style) || !nodeMap) return 0;
+  const pins = [];
+  for (const [copy, orig] of nodeMap) {
+    if (orig === root || (orig == null ? void 0 : orig.nodeType) !== 1 || (copy == null ? void 0 : copy.nodeType) !== 1 || !copy.style) continue;
+    const s = getStyle(orig);
+    if (!VIEWPORT_POSITIONED.has(s.position) || !isTranslateOnly(s)) continue;
+    const rect = orig.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) continue;
+    let block = parentOf(orig);
+    while (block && block !== root && !createsContainingBlock(getStyle(block))) block = parentOf(block);
+    if (!block) continue;
+    if (block !== root && !isTranslateOnly(getStyle(block))) continue;
+    const b = block.getBoundingClientRect();
+    pins.push({
+      copy,
+      sticky: s.position !== "fixed",
+      left: rect.left - b.left - (block.clientLeft || 0),
+      top: rect.top - b.top - (block.clientTop || 0),
+      width: rect.width,
+      height: rect.height
+    });
+  }
+  if (pins.length && getStyle(root).position === "static") rootClone.style.position = "relative";
+  for (const p of pins) {
+    const st = p.copy.style;
+    if (p.sticky && p.copy.parentNode) {
+      const ph = p.copy.cloneNode(false);
+      ph.style.position = "static";
+      ph.style.visibility = "hidden";
+      ph.style.width = `${p.width}px`;
+      ph.style.height = `${p.height}px`;
+      ph.style.boxSizing = "border-box";
+      p.copy.parentNode.insertBefore(ph, p.copy);
+    }
+    st.position = "absolute";
+    st.left = `${p.left}px`;
+    st.top = `${p.top}px`;
+    st.right = "auto";
+    st.bottom = "auto";
+    st.width = `${p.width}px`;
+    st.height = `${p.height}px`;
+    st.margin = "0";
+    st.boxSizing = "border-box";
+    st.transform = "none";
+    st.translate = "none";
+  }
+  return pins.length;
+}
 async function captureQuick({ scale } = {}) {
   const { snapdom } = await import("@zumer/snapdom");
   const dpr = window.devicePixelRatio || 1;
+  const s = scale || Math.min(dpr, 2);
+  const bodyRect = document.body.getBoundingClientRect();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
   const result = await snapdom(document.body, {
-    scale: scale || Math.min(dpr, 2),
+    scale: s,
+    // s already includes the pixel ratio; without this snapdom multiplies by it again.
+    dpr: 1,
     exclude: WIDGET_SELECTORS,
     excludeMode: "hide",
     backgroundColor: "#ffffff",
     embedFonts: true,
-    fast: true
+    fast: true,
+    plugins: [{
+      name: "kids-feedback-viewport-pin",
+      afterClone: (c) => {
+        pinViewportPositioned({ root: c.element, rootClone: c.clone, nodeMap: c.nodeMap });
+      }
+    }]
   });
-  const blob = await result.toBlob({ type: "png" });
-  const { width, height } = await imageSize(blob);
-  return { blob, width, height, method: "quick" };
+  const full = await loadImage(await result.toBlob({ type: "png" }));
+  const r = viewportCropRect({
+    bodyRect,
+    viewportWidth,
+    viewportHeight,
+    scale: s,
+    imageWidth: full.naturalWidth,
+    imageHeight: full.naturalHeight
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width = r.outWidth;
+  canvas.height = r.outHeight;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, r.outWidth, r.outHeight);
+  if (r.sw > 0 && r.sh > 0) ctx.drawImage(full, r.sx, r.sy, r.sw, r.sh, r.dx, r.dy, r.dw, r.dh);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  return { blob, width: r.outWidth, height: r.outHeight, method: "quick" };
+}
+function loadImage(blob) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not read the screenshot."));
+    };
+    img.src = url;
+  });
 }
 async function captureExact() {
   if (!supportsExactCapture()) throw new Error("Exact capture is not supported in this browser.");
@@ -1021,21 +1140,6 @@ function nextFrames(n) {
   return new Promise((resolve) => {
     const step = (k) => k <= 0 ? resolve() : requestAnimationFrame(() => step(k - 1));
     step(n);
-  });
-}
-function imageSize(blob) {
-  return new Promise((resolve) => {
-    const url = URL.createObjectURL(blob);
-    const img = new Image();
-    img.onload = () => {
-      resolve({ width: img.naturalWidth, height: img.naturalHeight });
-      URL.revokeObjectURL(url);
-    };
-    img.onerror = () => {
-      resolve({ width: 0, height: 0 });
-      URL.revokeObjectURL(url);
-    };
-    img.src = url;
   });
 }
 function blobToFile(blob, name, type) {
@@ -1096,7 +1200,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.3.0";
+var WIDGET_VERSION = "1.4.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT = 280;
