@@ -3,7 +3,7 @@
    annotator, recording pill, KIDS inbox): frosted glass panels, pill controls, one accent, a lime
    call to action, soft motion. Tokens follow the BNERC lab-ui palette; a host can override any
    --kf-* variable. Dark follows the host's html[data-theme="dark"] (BNERC); others stay light. */
-.kids-feedback-root, .kids-feedback-pill, .kf-root, .fi-page, .fi-drawer {
+.kids-feedback-root, .kids-feedback-pill, .kf-root, .kf-pop, .fi-page, .fi-drawer {
   --kf-ink: #14142B;
   --kf-muted: #5B5E77;
   --kf-faint: #8A8DA6;
@@ -25,7 +25,7 @@
   --kf-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --kf-ease: cubic-bezier(.2, .8, .2, 1);
 }
-:root[data-theme="dark"] :is(.kids-feedback-root, .kids-feedback-pill, .kf-root, .fi-page, .fi-drawer) {
+:root[data-theme="dark"] :is(.kids-feedback-root, .kids-feedback-pill, .kf-root, .kf-pop, .fi-page, .fi-drawer) {
   --kf-ink: #E9FBF4;
   --kf-muted: #9CC7BC;
   --kf-faint: #6E9B90;
@@ -244,11 +244,26 @@
 .kf-context pre { max-height: 220px; overflow: auto; background: var(--kf-stage); color: #e2e8f0; border-radius: 14px; padding: 12px; font-size: 11.5px; }
 
 /* My reports */
-.kf-report { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 12px 14px; margin-bottom: 8px; border-radius: 16px; background: var(--kf-glass-strong); border: 1px solid var(--kf-hairline); animation: kf-fade .35s var(--kf-ease) both; transition: transform .18s var(--kf-ease), border-color .18s; }
+.kf-report { display: grid; grid-template-columns: 18px 1fr auto; gap: 12px; align-items: center; padding: 12px 14px; margin-bottom: 8px; border-radius: 16px; background: var(--kf-glass-strong); border: 1px solid var(--kf-hairline); animation: kf-fade .35s var(--kf-ease) both; transition: transform .18s var(--kf-ease), border-color .18s; }
 .kf-report:hover { transform: translateY(-1px); border-color: var(--kf-accent); }
 .kf-report:nth-child(2) { animation-delay: .04s; } .kf-report:nth-child(3) { animation-delay: .08s; } .kf-report:nth-child(n + 4) { animation-delay: .12s; }
 .kf-report .t { font-size: 13.5px; color: var(--kf-ink); font-weight: 500; }
 .kf-report .s { font-size: 12px; color: var(--kf-muted); }
+.kf-report .ant-btn-link { font: 600 12px var(--kf-font); letter-spacing: .02em; color: var(--kf-accent); padding: 0 4px; }
+/* Status: a fixed-width glyph whose shape fills as the report moves (Linear-style), plus the
+   word in the meta line, so state never rests on color alone and titles always line up. */
+.kf-st { display: block; flex: none; color: var(--kf-faint, #8A8DA6); }
+.kf-st-label { font-weight: 600; color: var(--kf-faint, #8A8DA6); }
+.kf-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+/* Fallbacks: a host's dropdowns render outside the token scope. */
+.kf-st--acknowledged { color: var(--kf-info, #0B6BAA); } .kf-st--in_progress { color: var(--kf-warn, #B45309); }
+.kf-st--testing { color: var(--kf-accent, #6B63D9); } .kf-st--done { color: var(--kf-ok, #0F7B53); }
+/* Popovers are portaled to <body>, outside .kf-root: .kf-pop carries the tokens there. */
+.kf-pop .ant-popover-inner { background: var(--kf-glass-strong); backdrop-filter: blur(18px) saturate(160%); -webkit-backdrop-filter: blur(18px) saturate(160%); border: 1px solid var(--kf-hairline); border-radius: 16px; box-shadow: var(--kf-shadow); }
+.kf-pop .ant-popover-title { font: 600 13.5px var(--kf-font); color: var(--kf-ink); }
+.kf-pop .ant-popover-arrow::before { background: var(--kf-glass-strong); }
+.kf-pop .ant-typography-secondary { color: var(--kf-muted) !important; }
+.kf-pop .kf-context pre { margin: 10px 0 0; }
 
 /* Inbox (KIDS) */
 .fi-page { padding: 4px 8px 32px; }

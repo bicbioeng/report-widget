@@ -492,7 +492,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
       )}
       <span className="kf-included">
         We'll also include the page, your account, browser and recent errors.{' '}
-        <Popover content={includedPopover} title="What gets included" trigger="click" placement="topLeft"><a>view</a></Popover>
+        <Popover rootClassName="kf-pop" content={includedPopover} title="What gets included" trigger="click" placement="topLeft"><a>view</a></Popover>
         <span className="kf-sep">·</span>{problemLink}
       </span>
       <Space>
@@ -580,7 +580,6 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
         <div className="kf-head">
           <div>
             <h3>{problem ? 'Problem with this form' : 'Report a bug or share an idea'}</h3>
-            <p>{config?.project ? `Goes straight to the ${appName} team as a ticket in ${config.project.name}.` : `Goes straight to the ${appName} team as a ticket.`}</p>
           </div>
           <Space>
             {!problem && <Tabs

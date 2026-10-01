@@ -128,6 +128,9 @@ export const STATE_COLORS: Record<string, string>;
 export const STATE_LABELS: Record<string, string>;
 export const KIND_LABELS: Record<string, string>;
 export function relTime(iso: string): string;
+/** Status glyph (shape fills with progress) and glyph + label, as in My reports. */
+export function StatusIcon(props: { state: string }): ReactElement;
+export function StatusLabel(props: { state: string }): ReactElement;
 
 export const WIDGET_VERSION: string;
 export const REPORT_TOOL_KIND: 'report-tool';
