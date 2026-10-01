@@ -20,13 +20,43 @@ export function supportsExactCapture() {
 }
 
 /**
+ * The rect of the body's content relative to the viewport. When the document
+ * scrolls, the offsets are 0 and this is the body box itself. When the body is
+ * its own scroller (body, html { height: 100% }), its box stays put and its
+ * content starts scrollLeft/scrollTop before it, scrollWidth x scrollHeight in
+ * size. No DOM access.
+ */
+export function scrollerFrame({ bodyRect, scrollLeft = 0, scrollTop = 0, scrollWidth = 0, scrollHeight = 0 }) {
+  return {
+    left: bodyRect.left - scrollLeft,
+    top: bodyRect.top - scrollTop,
+    width: Math.max(bodyRect.width, scrollWidth),
+    height: Math.max(bodyRect.height, scrollHeight),
+  };
+}
+
+/**
+ * snapdom's image starts at the content's top-left, so when that corner is
+ * inside the viewport (the body's default 8px margin at scroll 0) the strip
+ * above or left of it is not in the image, nor is a fixed header pinned over
+ * it. `pad` is that gap: the clone is moved down/right by it, so the image
+ * starts at the viewport edge, and `frame` is where the image then starts. The
+ * size stays the content's, so the clamp ratios are unchanged. No DOM access.
+ */
+export function coverViewportOrigin(frame) {
+  const pad = { left: Math.max(0, frame.left), top: Math.max(0, frame.top) };
+  return { pad, frame: { ...frame, left: frame.left - pad.left, top: frame.top - pad.top } };
+}
+
+/**
  * Where the visible viewport sits in a snapdom image of document.body.
- * bodyRect is body.getBoundingClientRect() (left/top go negative when the page
- * is scrolled). The image starts at the body's top-left corner but can be
- * larger than the body box: snapdom sizes it from scrollHeight/scrollWidth, so
- * a 6000px body can come back 6048px tall with the surplus at the bottom.
+ * bodyRect is the captured content's rect relative to the viewport (see
+ * scrollerFrame; left/top go negative when the page or the body is scrolled).
+ * The image starts at the content's top-left corner but can be larger than
+ * that rect: snapdom sizes it from scrollHeight/scrollWidth, so a 6000px body
+ * can come back 6048px tall with the surplus at the bottom.
  * Pixels per CSS px are therefore one factor for both axes, the smallest of
- * `scale` (what was requested, with dpr 1) and the two image/body ratios. The
+ * `scale` (what was requested, with dpr 1) and the two image/content ratios. The
  * ratios only matter when snapdom clamped a very tall image (16384px max), and
  * then they shrink by the same amount. Returns the source rectangle in image
  * pixels (sx/sy/sw/sh) and where to draw it on an output of viewport x scale
@@ -75,10 +105,14 @@ const parentOf = (el) => el.parentElement || el.getRootNode?.()?.host || null;
  * each one in the copy, as position:absolute at the on-screen rect, relative to
  * its containing block, so it is drawn where the user sees it. Sticky elements
  * leave a hidden placeholder so the content after them does not move up.
+ * When the body is its own scroller, its content origin is `rootScroll` above
+ * and left of its box, so offsets from the root are moved by that much.
  * `getStyle` is injectable so node --test can drive it with plain objects.
  * Returns how many elements were pinned.
  */
-export function pinViewportPositioned({ root, rootClone, nodeMap, getStyle = (el) => getComputedStyle(el) }) {
+export function pinViewportPositioned({
+  root, rootClone, nodeMap, rootScroll = { left: 0, top: 0 }, getStyle = (el) => getComputedStyle(el),
+}) {
   if (!root || !rootClone?.style || !nodeMap) return 0;
   const pins = [];
   for (const [copy, orig] of nodeMap) {
@@ -92,11 +126,12 @@ export function pinViewportPositioned({ root, rootClone, nodeMap, getStyle = (el
     if (!block) continue; // not inside the captured element
     if (block !== root && !isTranslateOnly(getStyle(block))) continue; // scaled/rotated box: offsets would not line up
     const b = block.getBoundingClientRect();
+    const shift = block === root ? rootScroll : { left: 0, top: 0 };
     pins.push({
       copy,
       sticky: s.position !== 'fixed',
-      left: rect.left - b.left - (block.clientLeft || 0),
-      top: rect.top - b.top - (block.clientTop || 0),
+      left: rect.left - b.left - (block.clientLeft || 0) + (shift.left || 0),
+      top: rect.top - b.top - (block.clientTop || 0) + (shift.top || 0),
       width: rect.width,
       height: rect.height,
     });
@@ -128,6 +163,66 @@ export function pinViewportPositioned({ root, rootClone, nodeMap, getStyle = (el
   return pins.length;
 }
 
+const SCROLLING = new Set(['auto', 'scroll', 'overlay']);
+
+// Scroll offsets and content size of the body when its computed overflow
+// would clip the copy: it is its own scroller, separate from
+// document.scrollingElement (in quirks mode the body is the scrollingElement
+// and its scrollTop is the document's), or its overflow went to the viewport
+// (html overflow visible) but the copy keeps it, so a height:100% body would
+// be cut off at one window height. null otherwise.
+function bodyScroller(body) {
+  if (body === document.scrollingElement) return null;
+  const s = getComputedStyle(body);
+  const overflows = (SCROLLING.has(s.overflowY) && body.scrollHeight > body.clientHeight)
+    || (SCROLLING.has(s.overflowX) && body.scrollWidth > body.clientWidth);
+  if (!body.scrollTop && !body.scrollLeft && !overflows) return null;
+  return {
+    left: body.scrollLeft, top: body.scrollTop, width: body.scrollWidth, height: body.scrollHeight,
+    sideways: body.scrollLeft !== 0 || body.scrollWidth > body.clientWidth,
+  };
+}
+
+// What the browser paints outside the body box: html's background, else the
+// body's, which then covers the whole canvas.
+function canvasBackground() {
+  const clear = (c) => !c || c === 'transparent' || /^rgba\(.*,\s*0\)$/.test(c);
+  for (const el of [document.documentElement, document.body]) {
+    const c = getComputedStyle(el).backgroundColor;
+    if (!clear(c)) return c;
+  }
+  return '#ffffff';
+}
+
+/**
+ * Make the clone of a scrolling body show its whole content from the top-left,
+ * unscrolled, so the image lines up with scrollerFrame(). snapdom shows a
+ * scrolled root's visible window instead: it clips the clone, wraps its
+ * children in a div translated by -scroll and moves inline absolute/fixed
+ * descendants by +scroll. Both are undone here, so the scroll is applied once,
+ * by the crop.
+ */
+function unscrollRootClone(rootClone, scroller) {
+  const st = rootClone.style;
+  const wrap = [...rootClone.children].find((el) => el.style?.willChange === 'transform' && /^translate\(/.test(el.style.transform));
+  if (wrap) {
+    wrap.style.transform = 'none';
+    wrap.style.willChange = 'auto'; // the root, not the wrapper, is the containing block again
+    for (const el of rootClone.querySelectorAll('*')) {
+      if (el.style?.position !== 'absolute') continue;
+      el.style.top = `${(parseFloat(el.style.top) || 0) - scroller.top}px`;
+      el.style.left = `${(parseFloat(el.style.left) || 0) - scroller.left}px`;
+    }
+  }
+  st.overflow = 'visible';
+  st.height = 'auto';
+  st.minHeight = `${scroller.height}px`;
+  if (scroller.sideways) {
+    st.width = 'auto';
+    st.minWidth = `${scroller.width}px`;
+  }
+}
+
 export async function captureQuick({ scale } = {}) {
   const { snapdom } = await import('@zumer/snapdom');
   const dpr = window.devicePixelRatio || 1;
@@ -135,6 +230,12 @@ export async function captureQuick({ scale } = {}) {
   // Read before rendering: snapdom draws the body's whole layout box, so on a
   // page that scrolls the document itself it would be the full page height.
   const bodyRect = document.body.getBoundingClientRect();
+  const scroller = bodyScroller(document.body);
+  const { pad, frame } = coverViewportOrigin(scrollerFrame(scroller
+    ? { bodyRect, scrollLeft: scroller.left, scrollTop: scroller.top, scrollWidth: scroller.width, scrollHeight: scroller.height }
+    : { bodyRect }));
+  const background = canvasBackground();
+  const rootScroll = scroller ? { left: scroller.left, top: scroller.top } : { left: 0, top: 0 };
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
   const result = await snapdom(document.body, {
@@ -143,24 +244,30 @@ export async function captureQuick({ scale } = {}) {
     dpr: 1,
     exclude: WIDGET_SELECTORS,
     excludeMode: 'hide',
-    backgroundColor: '#ffffff',
+    backgroundColor: background,
     embedFonts: true,
     fast: true,
     plugins: [{
       name: 'kids-feedback-viewport-pin',
-      afterClone: (c) => { pinViewportPositioned({ root: c.element, rootClone: c.clone, nodeMap: c.nodeMap }); },
+      afterClone: (c) => {
+        if (scroller) unscrollRootClone(c.clone, scroller);
+        pinViewportPositioned({ root: c.element, rootClone: c.clone, nodeMap: c.nodeMap, rootScroll });
+        // snapdom zeroes the copy's margin; this one only moves it within the image.
+        if (pad.left) c.clone.style.marginLeft = `${pad.left}px`;
+        if (pad.top) c.clone.style.marginTop = `${pad.top}px`;
+      },
     }],
   });
   const full = await loadImage(await result.toBlob({ type: 'png' }));
   const r = viewportCropRect({
-    bodyRect, viewportWidth, viewportHeight, scale: s,
+    bodyRect: frame, viewportWidth, viewportHeight, scale: s,
     imageWidth: full.naturalWidth, imageHeight: full.naturalHeight,
   });
   const canvas = document.createElement('canvas');
   canvas.width = r.outWidth;
   canvas.height = r.outHeight;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = background;
   ctx.fillRect(0, 0, r.outWidth, r.outHeight);
   if (r.sw > 0 && r.sh > 0) ctx.drawImage(full, r.sx, r.sy, r.sw, r.sh, r.dx, r.dy, r.dw, r.dh);
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));

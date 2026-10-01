@@ -1010,6 +1010,18 @@ function supportsExactCapture() {
   var _a;
   return typeof navigator !== "undefined" && Boolean((_a = navigator.mediaDevices) == null ? void 0 : _a.getDisplayMedia) && window.isSecureContext;
 }
+function scrollerFrame({ bodyRect, scrollLeft = 0, scrollTop = 0, scrollWidth = 0, scrollHeight = 0 }) {
+  return {
+    left: bodyRect.left - scrollLeft,
+    top: bodyRect.top - scrollTop,
+    width: Math.max(bodyRect.width, scrollWidth),
+    height: Math.max(bodyRect.height, scrollHeight)
+  };
+}
+function coverViewportOrigin(frame) {
+  const pad = { left: Math.max(0, frame.left), top: Math.max(0, frame.top) };
+  return { pad, frame: { ...frame, left: frame.left - pad.left, top: frame.top - pad.top } };
+}
 function viewportCropRect({ bodyRect, viewportWidth, viewportHeight, scale, imageWidth, imageHeight }) {
   const outWidth = Math.round(viewportWidth * scale);
   const outHeight = Math.round(viewportHeight * scale);
@@ -1038,7 +1050,13 @@ var parentOf = (el) => {
   var _a, _b;
   return el.parentElement || ((_b = (_a = el.getRootNode) == null ? void 0 : _a.call(el)) == null ? void 0 : _b.host) || null;
 };
-function pinViewportPositioned({ root, rootClone, nodeMap, getStyle = (el) => getComputedStyle(el) }) {
+function pinViewportPositioned({
+  root,
+  rootClone,
+  nodeMap,
+  rootScroll = { left: 0, top: 0 },
+  getStyle = (el) => getComputedStyle(el)
+}) {
   if (!root || !(rootClone == null ? void 0 : rootClone.style) || !nodeMap) return 0;
   const pins = [];
   for (const [copy, orig] of nodeMap) {
@@ -1052,11 +1070,12 @@ function pinViewportPositioned({ root, rootClone, nodeMap, getStyle = (el) => ge
     if (!block) continue;
     if (block !== root && !isTranslateOnly(getStyle(block))) continue;
     const b = block.getBoundingClientRect();
+    const shift = block === root ? rootScroll : { left: 0, top: 0 };
     pins.push({
       copy,
       sticky: s.position !== "fixed",
-      left: rect.left - b.left - (block.clientLeft || 0),
-      top: rect.top - b.top - (block.clientTop || 0),
+      left: rect.left - b.left - (block.clientLeft || 0) + (shift.left || 0),
+      top: rect.top - b.top - (block.clientTop || 0) + (shift.top || 0),
       width: rect.width,
       height: rect.height
     });
@@ -1087,11 +1106,61 @@ function pinViewportPositioned({ root, rootClone, nodeMap, getStyle = (el) => ge
   }
   return pins.length;
 }
+var SCROLLING = /* @__PURE__ */ new Set(["auto", "scroll", "overlay"]);
+function bodyScroller(body) {
+  if (body === document.scrollingElement) return null;
+  const s = getComputedStyle(body);
+  const overflows = SCROLLING.has(s.overflowY) && body.scrollHeight > body.clientHeight || SCROLLING.has(s.overflowX) && body.scrollWidth > body.clientWidth;
+  if (!body.scrollTop && !body.scrollLeft && !overflows) return null;
+  return {
+    left: body.scrollLeft,
+    top: body.scrollTop,
+    width: body.scrollWidth,
+    height: body.scrollHeight,
+    sideways: body.scrollLeft !== 0 || body.scrollWidth > body.clientWidth
+  };
+}
+function canvasBackground() {
+  const clear = (c) => !c || c === "transparent" || /^rgba\(.*,\s*0\)$/.test(c);
+  for (const el of [document.documentElement, document.body]) {
+    const c = getComputedStyle(el).backgroundColor;
+    if (!clear(c)) return c;
+  }
+  return "#ffffff";
+}
+function unscrollRootClone(rootClone, scroller) {
+  var _a;
+  const st = rootClone.style;
+  const wrap = [...rootClone.children].find((el) => {
+    var _a2;
+    return ((_a2 = el.style) == null ? void 0 : _a2.willChange) === "transform" && /^translate\(/.test(el.style.transform);
+  });
+  if (wrap) {
+    wrap.style.transform = "none";
+    wrap.style.willChange = "auto";
+    for (const el of rootClone.querySelectorAll("*")) {
+      if (((_a = el.style) == null ? void 0 : _a.position) !== "absolute") continue;
+      el.style.top = `${(parseFloat(el.style.top) || 0) - scroller.top}px`;
+      el.style.left = `${(parseFloat(el.style.left) || 0) - scroller.left}px`;
+    }
+  }
+  st.overflow = "visible";
+  st.height = "auto";
+  st.minHeight = `${scroller.height}px`;
+  if (scroller.sideways) {
+    st.width = "auto";
+    st.minWidth = `${scroller.width}px`;
+  }
+}
 async function captureQuick({ scale } = {}) {
   const { snapdom } = await import("@zumer/snapdom");
   const dpr = window.devicePixelRatio || 1;
   const s = scale || Math.min(dpr, 2);
   const bodyRect = document.body.getBoundingClientRect();
+  const scroller = bodyScroller(document.body);
+  const { pad, frame } = coverViewportOrigin(scrollerFrame(scroller ? { bodyRect, scrollLeft: scroller.left, scrollTop: scroller.top, scrollWidth: scroller.width, scrollHeight: scroller.height } : { bodyRect }));
+  const background = canvasBackground();
+  const rootScroll = scroller ? { left: scroller.left, top: scroller.top } : { left: 0, top: 0 };
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
   const result = await snapdom(document.body, {
@@ -1100,19 +1169,22 @@ async function captureQuick({ scale } = {}) {
     dpr: 1,
     exclude: WIDGET_SELECTORS,
     excludeMode: "hide",
-    backgroundColor: "#ffffff",
+    backgroundColor: background,
     embedFonts: true,
     fast: true,
     plugins: [{
       name: "kids-feedback-viewport-pin",
       afterClone: (c) => {
-        pinViewportPositioned({ root: c.element, rootClone: c.clone, nodeMap: c.nodeMap });
+        if (scroller) unscrollRootClone(c.clone, scroller);
+        pinViewportPositioned({ root: c.element, rootClone: c.clone, nodeMap: c.nodeMap, rootScroll });
+        if (pad.left) c.clone.style.marginLeft = `${pad.left}px`;
+        if (pad.top) c.clone.style.marginTop = `${pad.top}px`;
       }
     }]
   });
   const full = await loadImage(await result.toBlob({ type: "png" }));
   const r = viewportCropRect({
-    bodyRect,
+    bodyRect: frame,
     viewportWidth,
     viewportHeight,
     scale: s,
@@ -1123,7 +1195,7 @@ async function captureQuick({ scale } = {}) {
   canvas.width = r.outWidth;
   canvas.height = r.outHeight;
   const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#ffffff";
+  ctx.fillStyle = background;
   ctx.fillRect(0, 0, r.outWidth, r.outHeight);
   if (r.sw > 0 && r.sh > 0) ctx.drawImage(full, r.sx, r.sy, r.sw, r.sh, r.dx, r.dy, r.dw, r.dh);
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
@@ -1240,7 +1312,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.4.0";
+var WIDGET_VERSION = "1.5.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT = 280;
