@@ -19,20 +19,162 @@ export function supportsExactCapture() {
   return typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getDisplayMedia) && window.isSecureContext;
 }
 
+/**
+ * Where the visible viewport sits in a snapdom image of document.body.
+ * bodyRect is body.getBoundingClientRect() (left/top go negative when the page
+ * is scrolled). The image starts at the body's top-left corner but can be
+ * larger than the body box: snapdom sizes it from scrollHeight/scrollWidth, so
+ * a 6000px body can come back 6048px tall with the surplus at the bottom.
+ * Pixels per CSS px are therefore one factor for both axes, the smallest of
+ * `scale` (what was requested, with dpr 1) and the two image/body ratios. The
+ * ratios only matter when snapdom clamped a very tall image (16384px max), and
+ * then they shrink by the same amount. Returns the source rectangle in image
+ * pixels (sx/sy/sw/sh) and where to draw it on an output of viewport x scale
+ * (dx/dy/dw/dh). No DOM access.
+ */
+export function viewportCropRect({ bodyRect, viewportWidth, viewportHeight, scale, imageWidth, imageHeight }) {
+  const outWidth = Math.round(viewportWidth * scale);
+  const outHeight = Math.round(viewportHeight * scale);
+  let k = scale;
+  if (bodyRect.width > 0) k = Math.min(k, imageWidth / bodyRect.width);
+  if (bodyRect.height > 0) k = Math.min(k, imageHeight / bodyRect.height);
+  const axis = (bodyStart, bodySize, viewSize, imageSize) => {
+    // Visible part of the body in CSS px, measured from the body's own origin.
+    // bodyStart > 0: the body begins after the viewport origin, so shift the drawing.
+    const lo = Math.max(0, -bodyStart);
+    const hi = Math.min(imageSize / k, viewSize - bodyStart);
+    const len = Math.max(0, hi - lo);
+    const src = Math.min(imageSize, Math.round(lo * k));
+    const srcSize = Math.max(0, Math.min(imageSize - src, Math.round(len * k)));
+    const dst = Math.round((lo + bodyStart) * scale);
+    const dstSize = srcSize > 0 ? Math.round(len * scale) : 0;
+    return [src, srcSize, dst, dstSize];
+  };
+  const [sx, sw, dx, dw] = axis(bodyRect.left, bodyRect.width, viewportWidth, imageWidth);
+  const [sy, sh, dy, dh] = axis(bodyRect.top, bodyRect.height, viewportHeight, imageHeight);
+  return { sx, sy, sw, sh, dx, dy, dw, dh, outWidth, outHeight };
+}
+
+const VIEWPORT_POSITIONED = new Set(['fixed', 'sticky', '-webkit-sticky']);
+const isNone = (v) => !v || v === 'none';
+// Computed transform is 'none' or a matrix; only a plain translation is safe to
+// fold into the measured rect.
+const isTranslateOnly = (s) => (isNone(s.transform) || /^matrix\(\s*1\s*,\s*0\s*,\s*0\s*,\s*1\s*,/.test(s.transform))
+  && isNone(s.rotate) && isNone(s.scale);
+const createsContainingBlock = (s) => s.position !== 'static' || !isNone(s.transform) || !isNone(s.filter)
+  || !isNone(s.backdropFilter) || !isNone(s.perspective)
+  || /transform|perspective|filter/.test(s.willChange || '') || /layout|paint|strict|content/.test(s.contain || '');
+const parentOf = (el) => el.parentElement || el.getRootNode?.()?.host || null;
+
+/**
+ * snapdom renders an unscrolled copy of the body, so position:fixed and sticky
+ * elements land where they would be at scroll 0 (fixed ones at the top of the
+ * body, sticky ones back in flow) and the viewport crop misses them. snapdom
+ * only freezes them itself when the captured element is the scroller, and with
+ * document scrolling body.scrollTop is 0. This snapdom afterClone step pins
+ * each one in the copy, as position:absolute at the on-screen rect, relative to
+ * its containing block, so it is drawn where the user sees it. Sticky elements
+ * leave a hidden placeholder so the content after them does not move up.
+ * `getStyle` is injectable so node --test can drive it with plain objects.
+ * Returns how many elements were pinned.
+ */
+export function pinViewportPositioned({ root, rootClone, nodeMap, getStyle = (el) => getComputedStyle(el) }) {
+  if (!root || !rootClone?.style || !nodeMap) return 0;
+  const pins = [];
+  for (const [copy, orig] of nodeMap) {
+    if (orig === root || orig?.nodeType !== 1 || copy?.nodeType !== 1 || !copy.style) continue;
+    const s = getStyle(orig);
+    if (!VIEWPORT_POSITIONED.has(s.position) || !isTranslateOnly(s)) continue;
+    const rect = orig.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) continue;
+    let block = parentOf(orig);
+    while (block && block !== root && !createsContainingBlock(getStyle(block))) block = parentOf(block);
+    if (!block) continue; // not inside the captured element
+    if (block !== root && !isTranslateOnly(getStyle(block))) continue; // scaled/rotated box: offsets would not line up
+    const b = block.getBoundingClientRect();
+    pins.push({
+      copy,
+      sticky: s.position !== 'fixed',
+      left: rect.left - b.left - (block.clientLeft || 0),
+      top: rect.top - b.top - (block.clientTop || 0),
+      width: rect.width,
+      height: rect.height,
+    });
+  }
+  if (pins.length && getStyle(root).position === 'static') rootClone.style.position = 'relative';
+  for (const p of pins) {
+    const st = p.copy.style;
+    if (p.sticky && p.copy.parentNode) {
+      const ph = p.copy.cloneNode(false);
+      ph.style.position = 'static';
+      ph.style.visibility = 'hidden';
+      ph.style.width = `${p.width}px`;
+      ph.style.height = `${p.height}px`;
+      ph.style.boxSizing = 'border-box';
+      p.copy.parentNode.insertBefore(ph, p.copy);
+    }
+    st.position = 'absolute';
+    st.left = `${p.left}px`;
+    st.top = `${p.top}px`;
+    st.right = 'auto';
+    st.bottom = 'auto';
+    st.width = `${p.width}px`;
+    st.height = `${p.height}px`;
+    st.margin = '0';
+    st.boxSizing = 'border-box';
+    st.transform = 'none';
+    st.translate = 'none';
+  }
+  return pins.length;
+}
+
 export async function captureQuick({ scale } = {}) {
   const { snapdom } = await import('@zumer/snapdom');
   const dpr = window.devicePixelRatio || 1;
+  const s = scale || Math.min(dpr, 2);
+  // Read before rendering: snapdom draws the body's whole layout box, so on a
+  // page that scrolls the document itself it would be the full page height.
+  const bodyRect = document.body.getBoundingClientRect();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
   const result = await snapdom(document.body, {
-    scale: scale || Math.min(dpr, 2),
+    scale: s,
+    // s already includes the pixel ratio; without this snapdom multiplies by it again.
+    dpr: 1,
     exclude: WIDGET_SELECTORS,
     excludeMode: 'hide',
     backgroundColor: '#ffffff',
     embedFonts: true,
     fast: true,
+    plugins: [{
+      name: 'kids-feedback-viewport-pin',
+      afterClone: (c) => { pinViewportPositioned({ root: c.element, rootClone: c.clone, nodeMap: c.nodeMap }); },
+    }],
   });
-  const blob = await result.toBlob({ type: 'png' });
-  const { width, height } = await imageSize(blob);
-  return { blob, width, height, method: 'quick' };
+  const full = await loadImage(await result.toBlob({ type: 'png' }));
+  const r = viewportCropRect({
+    bodyRect, viewportWidth, viewportHeight, scale: s,
+    imageWidth: full.naturalWidth, imageHeight: full.naturalHeight,
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = r.outWidth;
+  canvas.height = r.outHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, r.outWidth, r.outHeight);
+  if (r.sw > 0 && r.sh > 0) ctx.drawImage(full, r.sx, r.sy, r.sw, r.sh, r.dx, r.dy, r.dw, r.dh);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+  return { blob, width: r.outWidth, height: r.outHeight, method: 'quick' };
+}
+
+function loadImage(blob) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read the screenshot.')); };
+    img.src = url;
+  });
 }
 
 /** Real pixels of the current tab. Throws NotAllowedError when the user cancels. */
