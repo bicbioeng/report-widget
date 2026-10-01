@@ -16,7 +16,7 @@ import {
   CameraOutlined,
   EditOutlined,
   ReloadOutlined,
-  DeleteOutlined as DeleteOutlined2,
+  DeleteOutlined as DeleteOutlined3,
   PaperClipOutlined,
   VideoCameraOutlined,
   StopOutlined as StopOutlined2,
@@ -39,7 +39,9 @@ import {
   CloseOutlined,
   DragOutlined,
   ZoomInOutlined,
-  ZoomOutOutlined
+  ZoomOutOutlined,
+  SelectOutlined,
+  DeleteOutlined
 } from "@ant-design/icons";
 
 // src/annotatorMath.js
@@ -85,17 +87,45 @@ function takeOnce(ref) {
   return v;
 }
 var exportErrorText = (subject) => `The marked-up ${subject.toLowerCase()} couldn't be saved. Cancel to keep the original attached.`;
+function shapeBox(s, textWidth, size) {
+  if (s.type === "pen") {
+    const xs = s.points.map((p) => p.x), ys = s.points.map((p) => p.y);
+    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+  }
+  if (s.type === "text") return { x: s.x, y: s.y - size, w: textWidth(s), h: size * 1.3 };
+  return { x: Math.min(s.x1, s.x2), y: Math.min(s.y1, s.y2), w: Math.abs(s.x2 - s.x1), h: Math.abs(s.y2 - s.y1) };
+}
+var segDist = (p, a, b) => {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const t = dx || dy ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy))) : 0;
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+};
+var inBox = (p, b, tol) => p.x >= b.x - tol && p.x <= b.x + b.w + tol && p.y >= b.y - tol && p.y <= b.y + b.h + tol;
+function hitShape(shapes, p, tol, textWidth, size) {
+  for (let i = shapes.length - 1; i >= 0; i--) {
+    const s = shapes[i];
+    const hit = s.type === "arrow" ? segDist(p, { x: s.x1, y: s.y1 }, { x: s.x2, y: s.y2 }) <= tol : s.type === "pen" ? s.points.some((q, j) => segDist(p, j ? s.points[j - 1] : q, q) <= tol) : inBox(p, shapeBox(s, textWidth, size), tol);
+    if (hit) return i;
+  }
+  return -1;
+}
+function moveShape(s, dx, dy) {
+  if (s.type === "pen") return { ...s, points: s.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) };
+  if (s.type === "text") return { ...s, x: s.x + dx, y: s.y + dy };
+  return { ...s, x1: s.x1 + dx, y1: s.y1 + dy, x2: s.x2 + dx, y2: s.y2 + dy };
+}
 
 // src/Annotator.jsx
 import { jsx, jsxs } from "react/jsx-runtime";
 var COLORS = ["#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#0f172a", "#ffffff"];
 var TOOLS = [
+  { key: "select", label: "Select", icon: /* @__PURE__ */ jsx(SelectOutlined, {}) },
   { key: "rect", label: "Box", icon: /* @__PURE__ */ jsx(BorderOutlined, {}) },
   { key: "arrow", label: "Arrow", icon: /* @__PURE__ */ jsx(ArrowRightOutlined, {}) },
   { key: "pen", label: "Draw", icon: /* @__PURE__ */ jsx(HighlightOutlined, {}) },
   { key: "blur", label: "Blur", icon: /* @__PURE__ */ jsx(EyeInvisibleOutlined, {}) },
   { key: "text", label: "Text", icon: /* @__PURE__ */ jsx(FontSizeOutlined, {}) },
-  { key: "move", label: "Move", icon: /* @__PURE__ */ jsx(DragOutlined, {}) }
+  { key: "move", label: "Pan", icon: /* @__PURE__ */ jsx(DragOutlined, {}) }
 ];
 var isTyping = (t) => t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
 function drawShape(ctx, s, blurred, lineScale) {
@@ -150,6 +180,8 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
   const [tool, setTool] = useState("rect");
   const [color, setColor] = useState(COLORS[0]);
   const [shapes, setShapes] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const dragRef = useRef(null);
   const [draft, setDraft] = useState(null);
   const [textAt, setTextAt] = useState(null);
   const [textValue, setTextValue] = useState("");
@@ -190,6 +222,18 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
     img.src = src;
   }, [src]);
   const lineScale = useMemo(() => imgRef.current ? Math.max(1, imgRef.current.naturalWidth / 1400) : 1, [ready]);
+  const textSize = Math.round(18 * lineScale);
+  const textWidth = useCallback((t) => {
+    var _a2;
+    const ctx = (_a2 = canvasRef.current) == null ? void 0 : _a2.getContext("2d");
+    if (!ctx) return 0;
+    ctx.save();
+    ctx.font = `600 ${textSize}px Inter, sans-serif`;
+    const w = ctx.measureText(t.text).width;
+    ctx.restore();
+    return w;
+  }, [textSize]);
+  const sel = selected != null ? shapes[selected] : null;
   const render = useCallback(() => {
     const c = canvasRef.current;
     const img = imgRef.current;
@@ -199,7 +243,16 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
     ctx.drawImage(img, 0, 0);
     for (const s of shapes) drawShape(ctx, s, blurRef.current, lineScale);
     if (draft) drawShape(ctx, draft, blurRef.current, lineScale);
-  }, [shapes, draft, lineScale]);
+    if (sel) {
+      const b = shapeBox(sel, textWidth, textSize), pad = 6 * lineScale;
+      ctx.save();
+      ctx.setLineDash([6 * lineScale, 4 * lineScale]);
+      ctx.lineWidth = 1.5 * lineScale;
+      ctx.strokeStyle = "#6366f1";
+      ctx.strokeRect(b.x - pad, b.y - pad, b.w + pad * 2, b.h + pad * 2);
+      ctx.restore();
+    }
+  }, [shapes, draft, lineScale, sel, textWidth, textSize]);
   useEffect(() => {
     if (ready) render();
   }, [ready, render]);
@@ -261,7 +314,12 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
   const zoomIn = () => zoomTo(stepZoom(zoomRef.current, fit, 1));
   const zoomOut = () => zoomTo(stepZoom(zoomRef.current, fit, -1));
   const zoomFit = () => zoomTo(1);
-  keysRef.current = { zoomIn, zoomOut, zoomFit, zoomTo };
+  const deleteSelected = () => {
+    if (selected == null) return;
+    setShapes((all) => all.filter((_, j) => j !== selected));
+    setSelected(null);
+  };
+  keysRef.current = { zoomIn, zoomOut, zoomFit, zoomTo, deleteSelected };
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return void 0;
@@ -292,6 +350,9 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
       } else if (e.key === "0") {
         e.preventDefault();
         keysRef.current.zoomFit();
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        keysRef.current.deleteSelected();
       }
     };
     const onKeyUp = (e) => {
@@ -327,7 +388,7 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
     return { x, y, cx: e.clientX - r.left, cy: e.clientY - r.top };
   };
   const onPointerDown = (e) => {
-    var _a2, _b2, _c, _d, _e, _f;
+    var _a2, _b2, _c, _d, _e, _f, _g, _h;
     if (!ready || ((_b2 = (_a2 = e.target).closest) == null ? void 0 : _b2.call(_a2, ".kf-text-input"))) return;
     const stage = stageRef.current;
     if ((tool === "move" || panReady) && e.button === 0 || e.button === 1) {
@@ -341,12 +402,21 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
     if (textAt || e.button !== 0 || e.target !== canvasRef.current) return;
     e.preventDefault();
     const p = toCanvas(e);
+    if (tool === "select") {
+      const i = hitShape(shapes, p, 8 / scale, textWidth, textSize);
+      setSelected(i >= 0 ? i : null);
+      if (i >= 0) {
+        dragRef.current = { i, x: p.x, y: p.y, orig: shapes[i] };
+        (_f = (_e = e.currentTarget).setPointerCapture) == null ? void 0 : _f.call(_e, e.pointerId);
+      }
+      return;
+    }
     if (tool === "text") {
       setTextAt(p);
       setTextValue("");
       return;
     }
-    (_f = (_e = e.currentTarget).setPointerCapture) == null ? void 0 : _f.call(_e, e.pointerId);
+    (_h = (_g = e.currentTarget).setPointerCapture) == null ? void 0 : _h.call(_g, e.pointerId);
     if (tool === "pen") setDraft({ type: "pen", color, points: [{ x: p.x, y: p.y }] });
     else setDraft({ type: tool, color, x1: p.x, y1: p.y, x2: p.x, y2: p.y });
   };
@@ -356,6 +426,12 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
       const stage = stageRef.current;
       stage.scrollLeft = pan.sl - (e.clientX - pan.x);
       stage.scrollTop = pan.st - (e.clientY - pan.y);
+      return;
+    }
+    const drag = dragRef.current;
+    if (drag) {
+      const p2 = toCanvas(e);
+      setShapes((all) => all.map((x, j) => j === drag.i ? moveShape(drag.orig, p2.x - drag.x, p2.y - drag.y) : x));
       return;
     }
     if (!draft) return;
@@ -368,12 +444,28 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
       setPanning(false);
       return;
     }
+    if (dragRef.current) {
+      dragRef.current = null;
+      return;
+    }
     const d = draftRef.current;
     if (!d) return;
     draftRef.current = null;
     const tooSmall = d.type !== "pen" && Math.abs(d.x2 - d.x1) < 3 && Math.abs(d.y2 - d.y1) < 3;
     if (!tooSmall) setShapes((s) => [...s, d]);
     setDraft(null);
+  };
+  const onDoubleClick = (e) => {
+    if (tool !== "select" || !ready || textAt) return;
+    const p = toCanvas(e);
+    const i = hitShape(shapes, p, 8 / scale, textWidth, textSize);
+    const t = shapes[i];
+    if (!t || t.type !== "text") return;
+    setShapes((all) => all.filter((_, j) => j !== i));
+    setSelected(null);
+    setColor(t.color);
+    setTextAt({ x: t.x, y: t.y, cx: t.x * scale, cy: t.y * scale });
+    setTextValue(t.text);
   };
   const finish = () => {
     const c = canvasRef.current;
@@ -383,6 +475,7 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
     setTextAt(null);
     setTextValue("");
     setShapes(all);
+    setSelected(null);
     draftRef.current = null;
     setDraft(null);
     const ctx = c.getContext("2d");
@@ -401,7 +494,10 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
   };
   return /* @__PURE__ */ jsxs("div", { className: "kf-annotator", children: [
     /* @__PURE__ */ jsxs("div", { className: "kf-tools", role: "toolbar", "aria-label": "Markup tools", children: [
-      TOOLS.map((t) => /* @__PURE__ */ jsxs("button", { type: "button", className: `kf-tool${tool === t.key ? " active" : ""}`, "aria-pressed": tool === t.key, disabled: t.key === "move" && !ready, onClick: () => setTool(t.key), children: [
+      TOOLS.map((t) => /* @__PURE__ */ jsxs("button", { type: "button", className: `kf-tool${tool === t.key ? " active" : ""}`, "aria-pressed": tool === t.key, disabled: t.key === "move" && !ready, onClick: () => {
+        setTool(t.key);
+        setSelected(null);
+      }, children: [
         t.icon,
         " ",
         t.label
@@ -415,12 +511,16 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
         /* @__PURE__ */ jsx(Tooltip, { title: "Zoom in (+)", children: /* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Zoom in", disabled: !ready || zoom >= maxZoom, onClick: zoomIn, children: /* @__PURE__ */ jsx(ZoomInOutlined, {}) }) }),
         /* @__PURE__ */ jsx(Tooltip, { title: "Fit to window (0)", children: /* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Fit to window", disabled: !ready || zoom === 1, onClick: zoomFit, children: "Fit" }) })
       ] }),
-      /* @__PURE__ */ jsx(Button, { size: "small", icon: /* @__PURE__ */ jsx(UndoOutlined, {}), disabled: !shapes.length, onClick: () => setShapes((s) => s.slice(0, -1)), children: "Undo" })
+      tool === "select" && /* @__PURE__ */ jsx(Button, { size: "small", icon: /* @__PURE__ */ jsx(DeleteOutlined, {}), disabled: !sel, onClick: deleteSelected, children: "Delete" }),
+      /* @__PURE__ */ jsx(Button, { size: "small", icon: /* @__PURE__ */ jsx(UndoOutlined, {}), disabled: !shapes.length, onClick: () => {
+        setShapes((s) => s.slice(0, -1));
+        setSelected(null);
+      }, children: "Undo" })
     ] }),
     /* @__PURE__ */ jsxs(
       "div",
       {
-        className: `kf-stage${panReady || tool === "move" ? " kf-pan-ready" : ""}${panning ? " kf-panning" : ""}`,
+        className: `kf-stage${panReady || tool === "move" ? " kf-pan-ready" : ""}${panning ? " kf-panning" : ""}${tool === "select" ? " kf-select" : ""}`,
         ref: stageRef,
         tabIndex: 0,
         "aria-label": "Image area. Use the arrow keys to scroll when zoomed in.",
@@ -429,6 +529,7 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
         onPointerUp,
         onPointerCancel: onPointerUp,
         onLostPointerCapture: onPointerUp,
+        onDoubleClick,
         onMouseDown: (e) => {
           if (e.button === 1) e.preventDefault();
         },
@@ -470,6 +571,7 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
       }
     ),
     /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }, children: [
+      tool === "select" && /* @__PURE__ */ jsx("span", { className: "kf-zoom-hint", children: "Drag a mark to move it. Double-click text to edit it. Delete removes the selected mark." }),
       zoom > 1 && /* @__PURE__ */ jsx("span", { className: "kf-zoom-hint", children: "Hold Space and drag to move around. Pinch or Ctrl + scroll to zoom." }),
       /* @__PURE__ */ jsx("span", { style: { flex: 1 } }),
       /* @__PURE__ */ jsxs(Space, { children: [
@@ -483,7 +585,7 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
 // src/VoicePanel.jsx
 import React3, { useEffect as useEffect4, useState as useState3 } from "react";
 import { Button as Button2, Space as Space2, Typography, Alert } from "antd";
-import { AudioOutlined, StopOutlined, DeleteOutlined, LoadingOutlined } from "@ant-design/icons";
+import { AudioOutlined, StopOutlined, DeleteOutlined as DeleteOutlined2, LoadingOutlined } from "@ant-design/icons";
 
 // src/recorders.js
 import { useCallback as useCallback2, useEffect as useEffect2, useRef as useRef2, useState as useState2 } from "react";
@@ -880,7 +982,7 @@ function VoicePanel({ value, onChange, transcriptionAvailable }) {
           " \xB7 ",
           formatMs(value.durationMs || 0)
         ] }),
-        /* @__PURE__ */ jsx3(Button2, { size: "small", type: "text", icon: /* @__PURE__ */ jsx3(DeleteOutlined, {}), onClick: () => onChange(null) })
+        /* @__PURE__ */ jsx3(Button2, { size: "small", type: "text", icon: /* @__PURE__ */ jsx3(DeleteOutlined2, {}), onClick: () => onChange(null) })
       ] }),
       transcribing && /* @__PURE__ */ jsxs2(Text, { type: "secondary", style: { fontSize: 12 }, children: [
         /* @__PURE__ */ jsx3(LoadingOutlined, {}),
@@ -1296,7 +1398,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.7.1";
+var WIDGET_VERSION = "1.8.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT = 280;
@@ -1767,7 +1869,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
           /* @__PURE__ */ jsxs4("div", { className: "kf-shot-actions", children: [
             /* @__PURE__ */ jsx5(Tooltip2, { title: "Draw on it", children: /* @__PURE__ */ jsx5(Button4, { size: "small", icon: /* @__PURE__ */ jsx5(EditOutlined, {}), onClick: () => setAnnotateTarget({ kind: "shot" }), children: "Annotate" }) }),
             desktop && supportsExactCapture() && /* @__PURE__ */ jsx5(Tooltip2, { title: "Retake with exact pixels (asks to share this tab)", children: /* @__PURE__ */ jsx5(Button4, { size: "small", icon: /* @__PURE__ */ jsx5(ReloadOutlined, {}), onClick: retakeExact, children: "Retake" }) }),
-            /* @__PURE__ */ jsx5(Tooltip2, { title: "Remove", children: /* @__PURE__ */ jsx5(Button4, { size: "small", danger: true, icon: /* @__PURE__ */ jsx5(DeleteOutlined2, {}), onClick: () => {
+            /* @__PURE__ */ jsx5(Tooltip2, { title: "Remove", children: /* @__PURE__ */ jsx5(Button4, { size: "small", danger: true, icon: /* @__PURE__ */ jsx5(DeleteOutlined3, {}), onClick: () => {
               URL.revokeObjectURL(shot.url);
               setShot(null);
             } }) })
@@ -1914,6 +2016,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
         destroyOnHidden: false,
         maskClosable: !submitting,
         className: `kf-modal${hidden ? " kf-hidden-mask" : ""}`,
+        rootClassName: "kf-root",
         wrapClassName: `kids-feedback-modal-wrap${hidden ? " kf-hidden" : ""}`,
         styles: { mask: hidden ? { display: "none" } : void 0 },
         closable: false,
@@ -1958,6 +2061,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
         centered: true,
         destroyOnHidden: true,
         wrapClassName: "kids-feedback-annotator-wrap",
+        rootClassName: "kf-root",
         title: (shownTarget == null ? void 0 : shownTarget.kind) === "file" ? "Annotate the image" : "Annotate the screenshot",
         maskClosable: false,
         zIndex: 1170,
