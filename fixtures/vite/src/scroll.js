@@ -4,6 +4,12 @@
 // height:100% !important with the body's own overflow and its default 8px
 // margin; the body's overflow goes to the viewport, but a copy of the body
 // keeps it and is cut off at one window height (GeDB's blank screenshot).
+// ?model=fullheight is the reporter's Home page with the Report dialog open:
+// html, body { height: 100% !important }, so <html> scrolls and the body box
+// stays one window tall while its content runs past it, and each capture runs
+// under antd's Modal scroll lock (html body { overflow-y: hidden }). The lock's
+// hidden goes to the viewport, but a copy of the body keeps it and is cut off at
+// one window height (BNFR-222's flat rgb(248,250,252) screenshot).
 // Imports the source directly, so no package build is needed.
 import { captureQuick } from '../../../src/capture.js';
 
@@ -20,6 +26,7 @@ const style = document.createElement('style');
 style.textContent = {
   body: 'html, body { height: 100% !important; } html { overflow: hidden; } body { overflow: auto; margin: 0; }',
   gedb: 'body, html { height: 100% !important; } body { overflow-y: auto; }',
+  fullheight: 'html, body { height: 100% !important; } body { margin: 0; background: #f8fafc; }',
 }[model] || 'body { margin: 0; }';
 document.head.appendChild(style);
 
@@ -65,8 +72,24 @@ const pixels = async (src) => {
   return { at, png: canvas.toDataURL('image/png') };
 };
 
+// What @rc-component/portal's useScrollLocker adds while an antd Modal is open
+// (plus a width calc when there is a scrollbar; headless Chromium hides them).
+const scrollLock = () => {
+  const lock = document.createElement('style');
+  lock.textContent = 'html body { overflow-y: hidden; }';
+  document.head.appendChild(lock);
+  return () => lock.remove();
+};
+
 window.__capture = async (screen) => {
-  const { blob, width, height } = await captureQuick({ scale: 1 });
+  const unlock = model === 'fullheight' ? scrollLock() : () => {};
+  let shot;
+  try {
+    shot = await captureQuick({ scale: 1 });
+  } finally {
+    unlock();
+  }
+  const { blob, width, height } = shot;
   const url = URL.createObjectURL(blob);
   const cap = await pixels(url);
   URL.revokeObjectURL(url);
