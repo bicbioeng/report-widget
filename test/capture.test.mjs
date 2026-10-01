@@ -1,7 +1,7 @@
 // Quick-capture viewport crop. Runs against src directly, no build needed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { viewportCropRect, pinViewportPositioned } from '../src/capture.js';
+import { viewportCropRect, pinViewportPositioned, scrollerFrame, coverViewportOrigin } from '../src/capture.js';
 
 function assertWithinViewport(r, viewportWidth, viewportHeight, scale) {
   assert.ok(r.outWidth <= Math.round(viewportWidth * scale));
@@ -255,4 +255,145 @@ test('page without fixed elements is untouched', () => {
 
 test('missing snapdom context is a no-op', () => {
   assert.equal(pinViewportPositioned({ root: null, rootClone: null, nodeMap: null, getStyle }), 0);
+});
+
+// Two scroll models. Document scrolling (KIDS, BNERC): the body box moves up by
+// the scroll and its own offsets are 0. Body scrolling (GeDB, body and html
+// height:100%): the body box stays at the top, viewport-sized, and its content
+// is scrollTop above it.
+const VIEWPORTS = [[1440, 900], [878, 900], [390, 844]];
+const SCROLLS = [0, 300, 900, 3000];
+
+for (const [W, H] of VIEWPORTS) {
+  for (const scroll of SCROLLS) {
+    for (const [scale, imageHeight] of [[1, 6000], [1, 6048], [2, 12000]]) {
+      test(`body scrolling ${W}x${H} at ${scroll}, scale ${scale}, image ${imageHeight}`, () => {
+        const frame = scrollerFrame({
+          bodyRect: { left: 0, top: 0, width: W, height: H }, scrollLeft: 0, scrollTop: scroll, scrollWidth: W, scrollHeight: 6000,
+        });
+        assert.deepEqual(frame, { left: 0, top: 0 - scroll, width: W, height: 6000 });
+        const r = viewportCropRect({ bodyRect: frame, viewportWidth: W, viewportHeight: H, scale, imageWidth: W * scale, imageHeight });
+        assert.deepEqual([r.sy, r.sh, r.dy, r.dh], [scroll * scale, H * scale, 0, H * scale]);
+        assert.deepEqual([r.sx, r.sw, r.dx, r.dw], [0, W * scale, 0, W * scale]);
+        assert.deepEqual([r.outWidth, r.outHeight], [W * scale, H * scale]);
+      });
+    }
+
+    test(`document scrolling ${W}x${H} at ${scroll}: same crop as the raw body rect`, () => {
+      const bodyRect = { left: 0, top: 0 - scroll, width: W, height: 6000 };
+      const frame = scrollerFrame({ bodyRect });
+      assert.deepEqual(frame, bodyRect);
+      for (const scale of [1, 2]) {
+        const args = { viewportWidth: W, viewportHeight: H, scale, imageWidth: W * scale, imageHeight: 6048 * scale };
+        const r = viewportCropRect({ bodyRect: frame, ...args });
+        assert.deepEqual(r, viewportCropRect({ bodyRect, ...args }));
+        assert.deepEqual([r.sy, r.sh, r.dy, r.dh, r.outWidth, r.outHeight], [scroll * scale, H * scale, 0, H * scale, W * scale, H * scale]);
+      }
+    });
+  }
+}
+
+test('body-scrolled 6000px page clamped to 16384px at scale 2', () => {
+  const frame = scrollerFrame({
+    bodyRect: { left: 0, top: 0, width: 1440, height: 900 }, scrollTop: 3000, scrollWidth: 1440, scrollHeight: 10000,
+  });
+  const imageHeight = 16384;
+  const imageWidth = Math.round(1440 * (imageHeight / 10000));
+  const r = viewportCropRect({ bodyRect: frame, viewportWidth: 1440, viewportHeight: 900, scale: 2, imageWidth, imageHeight });
+  const k = Math.min(imageWidth / 1440, imageHeight / 10000);
+  assert.equal(r.sy, Math.round(3000 * k));
+  assert.equal(r.sh, Math.round(900 * k));
+  assert.deepEqual([r.dy, r.dh, r.outWidth, r.outHeight], [0, 1800, 2880, 1800]);
+});
+
+test('body-scrolled 6000px page at scale 2 stays unclamped and pixel-exact', () => {
+  const frame = scrollerFrame({
+    bodyRect: { left: 0, top: 0, width: 390, height: 844 }, scrollTop: 3000, scrollWidth: 390, scrollHeight: 6000,
+  });
+  const r = viewportCropRect({ bodyRect: frame, viewportWidth: 390, viewportHeight: 844, scale: 2, imageWidth: 780, imageHeight: 12000 });
+  assert.deepEqual([r.sy, r.sh, r.dy, r.dh], [6000, 1688, 0, 1688]);
+});
+
+function bodyScrolledTo(scrollTop) {
+  // The body box never moves; fixed elements are where they are on screen.
+  const body = fakeEl('body', { rect: { left: 0, top: 0, width: 1280, height: 800 } });
+  const nav = fakeEl('nav', { rect: { left: 0, top: 0, width: 1280, height: 60 }, style: { position: 'fixed' }, parent: body });
+  const foot = fakeEl('foot', { rect: { left: 0, top: 760, width: 1280, height: 40 }, style: { position: 'fixed' }, parent: body });
+  const wrap = fakeEl('wrap', { rect: { left: 0, top: 200 - scrollTop, width: 1280, height: 1000 }, style: { position: 'relative' }, parent: body });
+  const bar = fakeEl('bar', { rect: { left: 0, top: 0, width: 1280, height: 50 }, style: { position: 'fixed' }, parent: wrap });
+  const copies = { body: fakeCopy('body'), nav: fakeCopy('nav'), foot: fakeCopy('foot'), wrap: fakeCopy('wrap'), bar: fakeCopy('bar') };
+  const nodeMap = new Map([[copies.body, body], [copies.nav, nav], [copies.foot, foot], [copies.wrap, wrap], [copies.bar, bar]]);
+  return { body, copies, nodeMap };
+}
+
+test('body scrolling: fixed elements are pinned in the scrolled content', () => {
+  const { body, copies, nodeMap } = bodyScrolledTo(1500);
+  pinViewportPositioned({ root: body, rootClone: copies.body, nodeMap, rootScroll: { left: 0, top: 1500 }, getStyle });
+  assert.equal(copies.nav.style.top, '1500px');
+  assert.equal(copies.foot.style.top, '2260px');
+  // A positioned block inside the body already moves with the scroll.
+  assert.equal(copies.bar.style.top, '1300px');
+});
+
+test('body scrolling: without rootScroll the fixed header would land at scroll 0', () => {
+  const { body, copies, nodeMap } = bodyScrolledTo(1500);
+  pinViewportPositioned({ root: body, rootClone: copies.body, nodeMap, getStyle });
+  assert.equal(copies.nav.style.top, '0px');
+});
+
+test('body scrolling: pinned header lands at sy in the crop', () => {
+  for (const scrollTop of SCROLLS) {
+    const { body, copies, nodeMap } = bodyScrolledTo(scrollTop);
+    pinViewportPositioned({ root: body, rootClone: copies.body, nodeMap, rootScroll: { left: 0, top: scrollTop }, getStyle });
+    const frame = scrollerFrame({ bodyRect: body.getBoundingClientRect(), scrollTop, scrollWidth: 1280, scrollHeight: 6000 });
+    const r = viewportCropRect({ bodyRect: frame, viewportWidth: 1280, viewportHeight: 800, scale: 1, imageWidth: 1280, imageHeight: 6000 });
+    assert.equal(parseFloat(copies.nav.style.top), r.sy);
+    assert.equal(parseFloat(copies.foot.style.top) - r.sy, 760);
+  }
+});
+
+// GeDB's body keeps its default 8px margin, so at scroll 0 the content starts
+// 8px inside the viewport and a fixed header at top:0 sits 8px above it.
+test('content starting inside the viewport is padded so the image starts at its edge', () => {
+  for (const [W, H] of VIEWPORTS) {
+    const bodyRect = { left: 8, top: 8, width: W - 16, height: H };
+    const { pad, frame } = coverViewportOrigin(scrollerFrame({ bodyRect, scrollWidth: W - 16, scrollHeight: 6000 }));
+    assert.deepEqual(pad, { left: 8, top: 8 });
+    assert.deepEqual(frame, { left: 0, top: 0, width: W - 16, height: 6000 });
+    const r = viewportCropRect({ bodyRect: frame, viewportWidth: W, viewportHeight: H, scale: 1, imageWidth: W, imageHeight: 6016 });
+    assert.deepEqual([r.sx, r.sy, r.dx, r.dy, r.dw, r.dh], [0, 0, 0, 0, W, H]);
+  }
+});
+
+test('no pad once the content origin is above or left of the viewport', () => {
+  for (const scroll of SCROLLS.filter((y) => y >= 8)) {
+    const body = coverViewportOrigin(scrollerFrame({
+      bodyRect: { left: 8, top: 8, width: 1424, height: 900 }, scrollTop: scroll, scrollWidth: 1424, scrollHeight: 6000,
+    }));
+    assert.deepEqual(body.pad, { left: 8, top: 0 });
+    assert.equal(body.frame.top, 8 - scroll);
+    const doc = coverViewportOrigin(scrollerFrame({ bodyRect: { left: 0, top: -scroll, width: 1440, height: 6000 } }));
+    assert.deepEqual(doc.pad, { left: 0, top: 0 });
+    assert.deepEqual(doc.frame, { left: 0, top: -scroll, width: 1440, height: 6000 });
+  }
+});
+
+test('the pad keeps the clamp ratio: content size is unchanged', () => {
+  const { frame } = coverViewportOrigin({ left: 8, top: 8, width: 1424, height: 10000 });
+  const imageHeight = 16384;
+  const imageWidth = Math.round(1424 * (imageHeight / 10000));
+  const r = viewportCropRect({ bodyRect: frame, viewportWidth: 1440, viewportHeight: 900, scale: 2, imageWidth, imageHeight });
+  const k = Math.min(imageWidth / 1424, imageHeight / 10000);
+  assert.deepEqual([r.sy, r.sh, r.dy, r.dh], [0, Math.round(900 * k), 0, 1800]);
+});
+
+test('fixed header over the body margin lands at the top of the padded image', () => {
+  const body = fakeEl('body', { rect: { left: 8, top: 8, width: 1424, height: 900 } });
+  const nav = fakeEl('nav', { rect: { left: 0, top: 0, width: 1440, height: 60 }, style: { position: 'fixed' }, parent: body });
+  const copies = { body: fakeCopy('body'), nav: fakeCopy('nav') };
+  const nodeMap = new Map([[copies.body, body], [copies.nav, nav]]);
+  pinViewportPositioned({ root: body, rootClone: copies.body, nodeMap, getStyle });
+  const { pad } = coverViewportOrigin(scrollerFrame({ bodyRect: body.getBoundingClientRect(), scrollHeight: 6000 }));
+  assert.equal(parseFloat(copies.nav.style.top) + pad.top, 0);
+  assert.equal(parseFloat(copies.nav.style.left) + pad.left, 0);
 });
