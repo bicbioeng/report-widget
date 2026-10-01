@@ -571,6 +571,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
         destroyOnHidden={false}
         maskClosable={!submitting}
         className={`kf-modal${hidden ? ' kf-hidden-mask' : ''}`}
+        rootClassName="kf-root"
         wrapClassName={`kids-feedback-modal-wrap${hidden ? ' kf-hidden' : ''}`}
         styles={{ mask: hidden ? { display: 'none' } : undefined }}
         closable={false}
@@ -612,6 +613,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
         centered
         destroyOnHidden
         wrapClassName="kids-feedback-annotator-wrap"
+        rootClassName="kf-root"
         title={shownTarget?.kind === 'file' ? 'Annotate the image' : 'Annotate the screenshot'}
         // A stray click on the mask must not throw the drawing away.
         maskClosable={false}

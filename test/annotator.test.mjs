@@ -203,3 +203,30 @@ test('exportErrorText names the subject and does not blame zoom', () => {
   assert.equal(exportErrorText('Image'), "The marked-up image couldn't be saved. Cancel to keep the original attached.");
   assert.doesNotMatch(exportErrorText('Image'), /zoom/i);
 });
+
+import { shapeBox, hitShape, moveShape } from '../src/annotatorMath.js';
+
+const W = () => 40; // every text mark is 40 px wide here
+const marks = [
+  { type: 'rect', x1: 10, y1: 10, x2: 60, y2: 40 },
+  { type: 'arrow', x1: 100, y1: 100, x2: 200, y2: 100 },
+  { type: 'pen', points: [{ x: 300, y: 300 }, { x: 320, y: 340 }] },
+  { type: 'text', x: 400, y: 50, text: 'ya yaha hunu arxa' },
+];
+
+test('hitShape finds the topmost mark: inside boxes and text, near lines', () => {
+  assert.equal(hitShape(marks, { x: 30, y: 25 }, 6, W, 18), 0);
+  assert.equal(hitShape(marks, { x: 150, y: 104 }, 6, W, 18), 1);
+  assert.equal(hitShape(marks, { x: 150, y: 120 }, 6, W, 18), -1);
+  assert.equal(hitShape(marks, { x: 311, y: 321 }, 6, W, 18), 2);
+  assert.equal(hitShape(marks, { x: 420, y: 45 }, 6, W, 18), 3);
+  const stacked = [...marks, { type: 'rect', x1: 0, y1: 0, x2: 100, y2: 100 }];
+  assert.equal(hitShape(stacked, { x: 30, y: 25 }, 6, W, 18), 4);
+});
+
+test('moveShape shifts every kind of mark and keeps its text', () => {
+  assert.deepEqual(moveShape(marks[0], 5, -5), { type: 'rect', x1: 15, y1: 5, x2: 65, y2: 35 });
+  assert.deepEqual(moveShape(marks[2], 1, 2).points, [{ x: 301, y: 302 }, { x: 321, y: 342 }]);
+  assert.deepEqual(moveShape(marks[3], 10, 10), { type: 'text', x: 410, y: 60, text: 'ya yaha hunu arxa' });
+  assert.deepEqual(shapeBox(marks[3], W, 18), { x: 400, y: 32, w: 40, h: 18 * 1.3 });
+});

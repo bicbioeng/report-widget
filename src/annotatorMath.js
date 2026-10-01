@@ -72,3 +72,40 @@ export function takeOnce(ref) {
 
 // Export size never depends on zoom, so the copy doesn't mention it.
 export const exportErrorText = (subject) => `The marked-up ${subject.toLowerCase()} couldn't be saved. Cancel to keep the original attached.`;
+
+// ── Selecting and moving marks ───────────────────────────────────────────────
+// textWidth(s) measures a text mark (the caller owns the canvas); size is its font size in image px.
+
+export function shapeBox(s, textWidth, size) {
+  if (s.type === 'pen') {
+    const xs = s.points.map((p) => p.x), ys = s.points.map((p) => p.y);
+    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+  }
+  if (s.type === 'text') return { x: s.x, y: s.y - size, w: textWidth(s), h: size * 1.3 };
+  return { x: Math.min(s.x1, s.x2), y: Math.min(s.y1, s.y2), w: Math.abs(s.x2 - s.x1), h: Math.abs(s.y2 - s.y1) };
+}
+
+const segDist = (p, a, b) => {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const t = dx || dy ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy))) : 0;
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+};
+const inBox = (p, b, tol) => p.x >= b.x - tol && p.x <= b.x + b.w + tol && p.y >= b.y - tol && p.y <= b.y + b.h + tol;
+
+// Topmost mark under p, or -1. Lines (arrow, pen) hit near the stroke; boxes, blur and text anywhere inside.
+export function hitShape(shapes, p, tol, textWidth, size) {
+  for (let i = shapes.length - 1; i >= 0; i--) {
+    const s = shapes[i];
+    const hit = s.type === 'arrow' ? segDist(p, { x: s.x1, y: s.y1 }, { x: s.x2, y: s.y2 }) <= tol
+      : s.type === 'pen' ? s.points.some((q, j) => segDist(p, j ? s.points[j - 1] : q, q) <= tol)
+      : inBox(p, shapeBox(s, textWidth, size), tol);
+    if (hit) return i;
+  }
+  return -1;
+}
+
+export function moveShape(s, dx, dy) {
+  if (s.type === 'pen') return { ...s, points: s.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) };
+  if (s.type === 'text') return { ...s, x: s.x + dx, y: s.y + dy };
+  return { ...s, x1: s.x1 + dx, y1: s.y1 + dy, x2: s.x2 + dx, y2: s.y2 + dy };
+}

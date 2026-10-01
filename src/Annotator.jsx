@@ -1,5 +1,5 @@
 /**
- * Image annotator — rectangle, arrow, pen, blur and text on a canvas.
+ * Image annotator — rectangle, arrow, pen, blur and text on a canvas; Select moves, edits or deletes a mark.
  * Hand-rolled: the marker libraries are watermarked or paid, and the tools a
  * bug reporter needs fit in one file.
  */
@@ -8,18 +8,19 @@ import { Button, Input, Space, Tooltip, message } from 'antd';
 import {
   BorderOutlined, ArrowRightOutlined, HighlightOutlined, EyeInvisibleOutlined,
   FontSizeOutlined, UndoOutlined, CheckOutlined, CloseOutlined, DragOutlined,
-  ZoomInOutlined, ZoomOutOutlined,
+  ZoomInOutlined, ZoomOutOutlined, SelectOutlined, DeleteOutlined,
 } from '@ant-design/icons';
-import { clampZoom, maxZoomFor, stepZoom, clientToImage, imageCoordAt, scrollToAnchor, heldAnchor, textBoxRect, spaceActivates, withPendingText, takeOnce, exportErrorText } from './annotatorMath.js';
+import { clampZoom, maxZoomFor, stepZoom, clientToImage, imageCoordAt, scrollToAnchor, heldAnchor, textBoxRect, spaceActivates, withPendingText, takeOnce, exportErrorText, shapeBox, hitShape, moveShape } from './annotatorMath.js';
 
 const COLORS = ['#ef4444', '#f59e0b', '#22c55e', '#3b82f6', '#0f172a', '#ffffff'];
 const TOOLS = [
+  { key: 'select', label: 'Select', icon: <SelectOutlined /> },
   { key: 'rect', label: 'Box', icon: <BorderOutlined /> },
   { key: 'arrow', label: 'Arrow', icon: <ArrowRightOutlined /> },
   { key: 'pen', label: 'Draw', icon: <HighlightOutlined /> },
   { key: 'blur', label: 'Blur', icon: <EyeInvisibleOutlined /> },
   { key: 'text', label: 'Text', icon: <FontSizeOutlined /> },
-  { key: 'move', label: 'Move', icon: <DragOutlined /> },
+  { key: 'move', label: 'Pan', icon: <DragOutlined /> },
 ];
 const isTyping = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
 
@@ -71,6 +72,8 @@ export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this
   const [tool, setTool] = useState('rect');
   const [color, setColor] = useState(COLORS[0]);
   const [shapes, setShapes] = useState([]);
+  const [selected, setSelected] = useState(null); // index into shapes (Select tool)
+  const dragRef = useRef(null); // { i, x, y, orig } while a mark is being moved
   const [draft, setDraft] = useState(null);
   const [textAt, setTextAt] = useState(null); // { x, y, cx, cy }
   const [textValue, setTextValue] = useState('');
@@ -115,6 +118,16 @@ export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this
   }, [src]);
 
   const lineScale = useMemo(() => (imgRef.current ? Math.max(1, imgRef.current.naturalWidth / 1400) : 1), [ready]);
+  const textSize = Math.round(18 * lineScale);
+  const textWidth = useCallback((t) => {
+    const ctx = canvasRef.current?.getContext('2d');
+    if (!ctx) return 0;
+    ctx.save(); ctx.font = `600 ${textSize}px Inter, sans-serif`;
+    const w = ctx.measureText(t.text).width;
+    ctx.restore();
+    return w;
+  }, [textSize]);
+  const sel = selected != null ? shapes[selected] : null;
 
   const render = useCallback(() => {
     const c = canvasRef.current;
@@ -125,7 +138,17 @@ export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this
     ctx.drawImage(img, 0, 0);
     for (const s of shapes) drawShape(ctx, s, blurRef.current, lineScale);
     if (draft) drawShape(ctx, draft, blurRef.current, lineScale);
-  }, [shapes, draft, lineScale]);
+    // The selection outline is screen-only: finish() redraws without it before exporting.
+    if (sel) {
+      const b = shapeBox(sel, textWidth, textSize), pad = 6 * lineScale;
+      ctx.save();
+      ctx.setLineDash([6 * lineScale, 4 * lineScale]);
+      ctx.lineWidth = 1.5 * lineScale;
+      ctx.strokeStyle = '#6366f1';
+      ctx.strokeRect(b.x - pad, b.y - pad, b.w + pad * 2, b.h + pad * 2);
+      ctx.restore();
+    }
+  }, [shapes, draft, lineScale, sel, textWidth, textSize]);
 
   useEffect(() => { if (ready) render(); }, [ready, render]);
 
@@ -197,7 +220,12 @@ export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this
   const zoomIn = () => zoomTo(stepZoom(zoomRef.current, fit, 1));
   const zoomOut = () => zoomTo(stepZoom(zoomRef.current, fit, -1));
   const zoomFit = () => zoomTo(1);
-  keysRef.current = { zoomIn, zoomOut, zoomFit, zoomTo };
+  const deleteSelected = () => {
+    if (selected == null) return;
+    setShapes((all) => all.filter((_, j) => j !== selected));
+    setSelected(null);
+  };
+  keysRef.current = { zoomIn, zoomOut, zoomFit, zoomTo, deleteSelected };
 
   // Ctrl/⌘+wheel and trackpad pinch (wheel + ctrlKey). Native and non-passive so the page itself doesn't zoom.
   useEffect(() => {
@@ -226,6 +254,7 @@ export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this
       } else if (e.key === '+' || e.key === '=') { e.preventDefault(); keysRef.current.zoomIn(); }
       else if (e.key === '-') { e.preventDefault(); keysRef.current.zoomOut(); }
       else if (e.key === '0') { e.preventDefault(); keysRef.current.zoomFit(); }
+      else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); keysRef.current.deleteSelected(); }
     };
     const onKeyUp = (e) => {
       if (e.key !== ' ' || isTyping(e.target) || spaceActivates(e.target, tabFocusRef.current)) return;
@@ -273,6 +302,15 @@ export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this
     if (textAt || e.button !== 0 || e.target !== canvasRef.current) return;
     e.preventDefault();
     const p = toCanvas(e);
+    if (tool === 'select') {
+      const i = hitShape(shapes, p, 8 / scale, textWidth, textSize);
+      setSelected(i >= 0 ? i : null);
+      if (i >= 0) {
+        dragRef.current = { i, x: p.x, y: p.y, orig: shapes[i] };
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+      }
+      return;
+    }
     if (tool === 'text') { setTextAt(p); setTextValue(''); return; }
     e.currentTarget.setPointerCapture?.(e.pointerId);
     if (tool === 'pen') setDraft({ type: 'pen', color, points: [{ x: p.x, y: p.y }] });
@@ -286,6 +324,12 @@ export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this
       stage.scrollTop = pan.st - (e.clientY - pan.y);
       return;
     }
+    const drag = dragRef.current;
+    if (drag) {
+      const p = toCanvas(e);
+      setShapes((all) => all.map((x, j) => (j === drag.i ? moveShape(drag.orig, p.x - drag.x, p.y - drag.y) : x)));
+      return;
+    }
     if (!draft) return;
     const p = toCanvas(e);
     setDraft((d) => (d.type === 'pen' ? { ...d, points: [...d.points, { x: p.x, y: p.y }] } : { ...d, x2: p.x, y2: p.y }));
@@ -293,12 +337,27 @@ export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this
   // Also bound to pointercancel and lostpointercapture, which follows pointerup — draftRef stops a double commit.
   const onPointerUp = () => {
     if (panRef.current) { panRef.current = null; setPanning(false); return; }
+    if (dragRef.current) { dragRef.current = null; return; }
     const d = draftRef.current;
     if (!d) return;
     draftRef.current = null;
     const tooSmall = d.type !== 'pen' && Math.abs(d.x2 - d.x1) < 3 && Math.abs(d.y2 - d.y1) < 3;
     if (!tooSmall) setShapes((s) => [...s, d]);
     setDraft(null);
+  };
+
+  // Double-click a text mark (Select tool) to edit it in place; committing puts it back.
+  const onDoubleClick = (e) => {
+    if (tool !== 'select' || !ready || textAt) return;
+    const p = toCanvas(e);
+    const i = hitShape(shapes, p, 8 / scale, textWidth, textSize);
+    const t = shapes[i];
+    if (!t || t.type !== 'text') return;
+    setShapes((all) => all.filter((_, j) => j !== i));
+    setSelected(null);
+    setColor(t.color);
+    setTextAt({ x: t.x, y: t.y, cx: t.x * scale, cy: t.y * scale });
+    setTextValue(t.text);
   };
 
   // Draws the committed shapes (and any open text) synchronously, without the draft, then exports at natural size.
@@ -310,6 +369,7 @@ export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this
     setTextAt(null);
     setTextValue('');
     setShapes(all);
+    setSelected(null);
     draftRef.current = null;
     setDraft(null);
     const ctx = c.getContext('2d');
@@ -328,7 +388,7 @@ export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this
     <div className="kf-annotator">
       <div className="kf-tools" role="toolbar" aria-label="Markup tools">
         {TOOLS.map((t) => (
-          <button key={t.key} type="button" className={`kf-tool${tool === t.key ? ' active' : ''}`} aria-pressed={tool === t.key} disabled={t.key === 'move' && !ready} onClick={() => setTool(t.key)}>
+          <button key={t.key} type="button" className={`kf-tool${tool === t.key ? ' active' : ''}`} aria-pressed={tool === t.key} disabled={t.key === 'move' && !ready} onClick={() => { setTool(t.key); setSelected(null); }}>
             {t.icon} {t.label}
           </button>
         ))}
@@ -351,10 +411,11 @@ export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this
             <button type="button" aria-label="Fit to window" disabled={!ready || zoom === 1} onClick={zoomFit}>Fit</button>
           </Tooltip>
         </span>
-        <Button size="small" icon={<UndoOutlined />} disabled={!shapes.length} onClick={() => setShapes((s) => s.slice(0, -1))}>Undo</Button>
+        {tool === 'select' && <Button size="small" icon={<DeleteOutlined />} disabled={!sel} onClick={deleteSelected}>Delete</Button>}
+        <Button size="small" icon={<UndoOutlined />} disabled={!shapes.length} onClick={() => { setShapes((s) => s.slice(0, -1)); setSelected(null); }}>Undo</Button>
       </div>
       <div
-        className={`kf-stage${panReady || tool === 'move' ? ' kf-pan-ready' : ''}${panning ? ' kf-panning' : ''}`}
+        className={`kf-stage${panReady || tool === 'move' ? ' kf-pan-ready' : ''}${panning ? ' kf-panning' : ''}${tool === 'select' ? ' kf-select' : ''}`}
         ref={stageRef}
         tabIndex={0}
         aria-label="Image area. Use the arrow keys to scroll when zoomed in."
@@ -363,6 +424,7 @@ export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onLostPointerCapture={onPointerUp}
+        onDoubleClick={onDoubleClick}
         onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
       >
         <div className="kf-canvas-wrap" ref={wrapRef} style={failed ? { display: 'none' } : undefined}>
@@ -392,6 +454,7 @@ export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this
         {failed && <div className="kf-stage-error">This image can't be opened for markup. It will still be attached as it is.</div>}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {tool === 'select' && <span className="kf-zoom-hint">Drag a mark to move it. Double-click text to edit it. Delete removes the selected mark.</span>}
         {zoom > 1 && <span className="kf-zoom-hint">Hold Space and drag to move around. Pinch or Ctrl + scroll to zoom.</span>}
         <span style={{ flex: 1 }} />
         <Space>
