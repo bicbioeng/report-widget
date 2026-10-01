@@ -532,28 +532,25 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
   };
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "kf-annotator", children: [
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "kf-tools", role: "toolbar", "aria-label": "Markup tools", children: [
-      TOOLS.map((t) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { type: "button", className: `kf-tool${tool === t.key ? " active" : ""}`, "aria-pressed": tool === t.key, disabled: t.key === "move" && !ready, onClick: () => {
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "kf-group", children: TOOLS.map((t) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_antd.Tooltip, { title: t.label, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: `kf-tool${tool === t.key ? " active" : ""}`, "aria-label": t.label, "aria-pressed": tool === t.key, disabled: t.key === "move" && !ready, onClick: () => {
         setTool(t.key);
         setSelected(null);
-      }, children: [
-        t.icon,
-        " ",
-        t.label
-      ] }, t.key)),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { width: 8 } }),
-      COLORS.map((c) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_antd.Tooltip, { title: c, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `kf-swatch${color === c ? " active" : ""}`, style: { background: c }, onClick: () => setColor(c) }) }, c)),
+      }, children: t.icon }) }, t.key)) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "kf-group kf-colors", role: "group", "aria-label": "Color", children: COLORS.map((c) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", "aria-label": `Color ${c}`, "aria-pressed": color === c, className: `kf-swatch${color === c ? " active" : ""}`, style: { background: c }, onClick: () => setColor(c) }, c)) }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1 } }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "kf-group", children: [
+        tool === "select" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_antd.Tooltip, { title: "Delete selected (Del)", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "kf-tool", "aria-label": "Delete selected", disabled: !sel, onClick: deleteSelected, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_icons.DeleteOutlined, {}) }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_antd.Tooltip, { title: "Undo", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "kf-tool", "aria-label": "Undo", disabled: !shapes.length, onClick: () => {
+          setShapes((s) => s.slice(0, -1));
+          setSelected(null);
+        }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_icons.UndoOutlined, {}) }) })
+      ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "kf-zoom", role: "group", "aria-label": "Zoom", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_antd.Tooltip, { title: "Zoom out (\u2212)", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", "aria-label": "Zoom out", disabled: !ready || zoom <= 1, onClick: zoomOut, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_icons.ZoomOutOutlined, {}) }) }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "kf-zoom-pct", "aria-live": "polite", children: ready ? `${Math.round(scale * 100)}%` : "\u2014" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_antd.Tooltip, { title: "Zoom in (+)", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", "aria-label": "Zoom in", disabled: !ready || zoom >= maxZoom, onClick: zoomIn, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_icons.ZoomInOutlined, {}) }) }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_antd.Tooltip, { title: "Fit to window (0)", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", "aria-label": "Fit to window", disabled: !ready || zoom === 1, onClick: zoomFit, children: "Fit" }) })
-      ] }),
-      tool === "select" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_antd.Button, { size: "small", icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_icons.DeleteOutlined, {}), disabled: !sel, onClick: deleteSelected, children: "Delete" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_antd.Button, { size: "small", icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_icons.UndoOutlined, {}), disabled: !shapes.length, onClick: () => {
-        setShapes((s) => s.slice(0, -1));
-        setSelected(null);
-      }, children: "Undo" })
+      ] })
     ] }),
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "div",
@@ -1436,7 +1433,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.8.0";
+var WIDGET_VERSION = "1.8.1";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT = 280;
