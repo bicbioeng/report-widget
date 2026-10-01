@@ -1107,9 +1107,9 @@ function pinViewportPositioned({
   return pins.length;
 }
 var SCROLLING = /* @__PURE__ */ new Set(["auto", "scroll", "overlay"]);
-function bodyScroller(body) {
-  if (body === document.scrollingElement) return null;
-  const s = getComputedStyle(body);
+function bodyScroller(body, scrollingElement, getStyle) {
+  if (body === scrollingElement) return null;
+  const s = getStyle(body);
   const overflows = SCROLLING.has(s.overflowY) && body.scrollHeight > body.clientHeight || SCROLLING.has(s.overflowX) && body.scrollWidth > body.clientWidth;
   if (!body.scrollTop && !body.scrollLeft && !overflows) return null;
   return {
@@ -1152,17 +1152,37 @@ function unscrollRootClone(rootClone, scroller) {
     st.minWidth = `${scroller.width}px`;
   }
 }
+function quickCaptureGeometry({
+  body,
+  scrollingElement,
+  viewportWidth,
+  viewportHeight,
+  getStyle = (el) => getComputedStyle(el)
+}) {
+  const bodyRect = body.getBoundingClientRect();
+  const scroller = bodyScroller(body, scrollingElement, getStyle);
+  const { pad, frame } = coverViewportOrigin(scrollerFrame(scroller ? { bodyRect, scrollLeft: scroller.left, scrollTop: scroller.top, scrollWidth: scroller.width, scrollHeight: scroller.height } : { bodyRect }));
+  const rootScroll = scroller ? { left: scroller.left, top: scroller.top } : { left: 0, top: 0 };
+  return { scroller, pad, frame, rootScroll, viewportWidth, viewportHeight };
+}
 async function captureQuick({ scale } = {}) {
   const { snapdom } = await import("@zumer/snapdom");
   const dpr = window.devicePixelRatio || 1;
   const s = scale || Math.min(dpr, 2);
-  const bodyRect = document.body.getBoundingClientRect();
-  const scroller = bodyScroller(document.body);
-  const { pad, frame } = coverViewportOrigin(scrollerFrame(scroller ? { bodyRect, scrollLeft: scroller.left, scrollTop: scroller.top, scrollWidth: scroller.width, scrollHeight: scroller.height } : { bodyRect }));
+  const {
+    scroller,
+    pad,
+    frame,
+    rootScroll,
+    viewportWidth,
+    viewportHeight
+  } = quickCaptureGeometry({
+    body: document.body,
+    scrollingElement: document.scrollingElement,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight
+  });
   const background = canvasBackground();
-  const rootScroll = scroller ? { left: scroller.left, top: scroller.top } : { left: 0, top: 0 };
-  const viewportWidth = window.innerWidth;
-  const viewportHeight = window.innerHeight;
   const result = await snapdom(document.body, {
     scale: s,
     // s already includes the pixel ratio; without this snapdom multiplies by it again.
@@ -1312,7 +1332,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.5.0";
+var WIDGET_VERSION = "1.6.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT = 280;

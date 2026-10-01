@@ -1,7 +1,9 @@
 // Quick-capture viewport crop. Runs against src directly, no build needed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { viewportCropRect, pinViewportPositioned, scrollerFrame, coverViewportOrigin } from '../src/capture.js';
+import {
+  viewportCropRect, pinViewportPositioned, scrollerFrame, coverViewportOrigin, quickCaptureGeometry,
+} from '../src/capture.js';
 
 function assertWithinViewport(r, viewportWidth, viewportHeight, scale) {
   assert.ok(r.outWidth <= Math.round(viewportWidth * scale));
@@ -396,4 +398,35 @@ test('fixed header over the body margin lands at the top of the padded image', (
   const { pad } = coverViewportOrigin(scrollerFrame({ bodyRect: body.getBoundingClientRect(), scrollHeight: 6000 }));
   assert.equal(parseFloat(copies.nav.style.top) + pad.top, 0);
   assert.equal(parseFloat(copies.nav.style.left) + pad.left, 0);
+});
+
+// A body that is its own scroller, as on a height:100%; overflow:auto page.
+const scrolledBody = () => ({
+  getBoundingClientRect: () => ({ left: 0, top: 0, width: 1024, height: 768 }),
+  scrollTop: 1200, scrollLeft: 0, scrollHeight: 6000, scrollWidth: 1024, clientHeight: 768, clientWidth: 1024,
+});
+const bodyStyle = () => ({ overflowY: 'auto', overflowX: 'visible' });
+
+test('body scrolled to 1200 inside a 1024x768 viewport, window not scrolled: crop starts 1200px down', () => {
+  const body = scrolledBody();
+  const html = { scrollTop: 0, scrollLeft: 0 }; // window.scrollY 0
+  const g = quickCaptureGeometry({ body, scrollingElement: html, viewportWidth: 1024, viewportHeight: 768, getStyle: bodyStyle });
+  assert.deepEqual(g.rootScroll, { left: 0, top: 1200 });
+  assert.deepEqual(g.frame, { left: 0, top: -1200, width: 1024, height: 6000 });
+  const r1 = viewportCropRect({ bodyRect: g.frame, viewportWidth: 1024, viewportHeight: 768, scale: 1, imageWidth: 1024, imageHeight: 6000 });
+  assert.deepEqual([r1.outWidth, r1.outHeight], [1024, 768]);
+  assert.deepEqual([r1.sy, r1.sh, r1.dy, r1.dh], [1200, 768, 0, 768]);
+  const r2 = viewportCropRect({ bodyRect: g.frame, viewportWidth: 1024, viewportHeight: 768, scale: 2, imageWidth: 2048, imageHeight: 12000 });
+  assert.deepEqual([r2.outWidth, r2.outHeight], [2048, 1536]);
+  assert.deepEqual([r2.sy, r2.sh, r2.dy, r2.dh], [2400, 1536, 0, 1536]);
+});
+
+test('quirks mode: body is the scrollingElement, so the crop follows the body rect', () => {
+  const body = { ...scrolledBody(), getBoundingClientRect: () => ({ left: 0, top: -1200, width: 1024, height: 6000 }) };
+  const g = quickCaptureGeometry({ body, scrollingElement: body, viewportWidth: 1024, viewportHeight: 768, getStyle: bodyStyle });
+  assert.equal(g.scroller, null);
+  assert.deepEqual(g.rootScroll, { left: 0, top: 0 });
+  assert.deepEqual(g.frame, { left: 0, top: -1200, width: 1024, height: 6000 });
+  const r = viewportCropRect({ bodyRect: g.frame, viewportWidth: 1024, viewportHeight: 768, scale: 1, imageWidth: 1024, imageHeight: 6000 });
+  assert.deepEqual([r.sy, r.sh, r.outWidth, r.outHeight], [1200, 768, 1024, 768]);
 });
