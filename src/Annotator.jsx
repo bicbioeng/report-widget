@@ -387,18 +387,31 @@ export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this
   return (
     <div className="kf-annotator">
       <div className="kf-tools" role="toolbar" aria-label="Markup tools">
-        {TOOLS.map((t) => (
-          <button key={t.key} type="button" className={`kf-tool${tool === t.key ? ' active' : ''}`} aria-pressed={tool === t.key} disabled={t.key === 'move' && !ready} onClick={() => { setTool(t.key); setSelected(null); }}>
-            {t.icon} {t.label}
-          </button>
-        ))}
-        <span style={{ width: 8 }} />
-        {COLORS.map((c) => (
-          <Tooltip key={c} title={c}>
-            <span className={`kf-swatch${color === c ? ' active' : ''}`} style={{ background: c }} onClick={() => setColor(c)} />
-          </Tooltip>
-        ))}
+        <span className="kf-group">
+          {TOOLS.map((t) => (
+            <Tooltip key={t.key} title={t.label}>
+              <button type="button" className={`kf-tool${tool === t.key ? ' active' : ''}`} aria-label={t.label} aria-pressed={tool === t.key} disabled={t.key === 'move' && !ready} onClick={() => { setTool(t.key); setSelected(null); }}>
+                {t.icon}
+              </button>
+            </Tooltip>
+          ))}
+        </span>
+        <span className="kf-group kf-colors" role="group" aria-label="Color">
+          {COLORS.map((c) => (
+            <button key={c} type="button" aria-label={`Color ${c}`} aria-pressed={color === c} className={`kf-swatch${color === c ? ' active' : ''}`} style={{ background: c }} onClick={() => setColor(c)} />
+          ))}
+        </span>
         <span style={{ flex: 1 }} />
+        <span className="kf-group">
+          {tool === 'select' && (
+            <Tooltip title="Delete selected (Del)">
+              <button type="button" className="kf-tool" aria-label="Delete selected" disabled={!sel} onClick={deleteSelected}><DeleteOutlined /></button>
+            </Tooltip>
+          )}
+          <Tooltip title="Undo">
+            <button type="button" className="kf-tool" aria-label="Undo" disabled={!shapes.length} onClick={() => { setShapes((s) => s.slice(0, -1)); setSelected(null); }}><UndoOutlined /></button>
+          </Tooltip>
+        </span>
         <span className="kf-zoom" role="group" aria-label="Zoom">
           <Tooltip title="Zoom out (−)">
             <button type="button" aria-label="Zoom out" disabled={!ready || zoom <= 1} onClick={zoomOut}><ZoomOutOutlined /></button>
@@ -411,8 +424,6 @@ export default function Annotator({ src, onDone, onCancel, doneLabel = 'Use this
             <button type="button" aria-label="Fit to window" disabled={!ready || zoom === 1} onClick={zoomFit}>Fit</button>
           </Tooltip>
         </span>
-        {tool === 'select' && <Button size="small" icon={<DeleteOutlined />} disabled={!sel} onClick={deleteSelected}>Delete</Button>}
-        <Button size="small" icon={<UndoOutlined />} disabled={!shapes.length} onClick={() => { setShapes((s) => s.slice(0, -1)); setSelected(null); }}>Undo</Button>
       </div>
       <div
         className={`kf-stage${panReady || tool === 'move' ? ' kf-pan-ready' : ''}${panning ? ' kf-panning' : ''}${tool === 'select' ? ' kf-select' : ''}`}

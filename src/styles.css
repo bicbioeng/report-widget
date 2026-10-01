@@ -203,12 +203,16 @@
 
 /* Annotator */
 .kf-annotator { display: grid; gap: 12px; }
-.kf-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px; border-radius: 999px; background: var(--kf-glass); border: 1px solid var(--kf-hairline); }
-.kf-tool { height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid transparent; background: transparent; cursor: pointer; font: 500 12.5px var(--kf-font); color: var(--kf-ink); display: inline-flex; align-items: center; gap: 6px; transition: background .15s, border-color .15s, transform .15s var(--kf-ease); }
+.kf-tools { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; padding: 5px; border-radius: 999px; background: var(--kf-glass); border: 1px solid var(--kf-hairline); }
+.kf-group { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+.kf-group + .kf-group { padding-left: 6px; margin-left: 2px; border-left: 1px solid var(--kf-hairline); }
+.kf-colors { gap: 6px; padding-right: 4px; }
+.kf-tool { width: 34px; height: 32px; padding: 0; border-radius: 999px; border: 1px solid transparent; background: transparent; cursor: pointer; font-size: 15px; color: var(--kf-ink); display: inline-flex; align-items: center; justify-content: center; transition: background .15s, border-color .15s, transform .15s var(--kf-ease); }
 .kf-tool:hover:not(:disabled) { background: var(--kf-accent-soft); }
 .kf-tool.active { border-color: var(--kf-accent); background: var(--kf-accent-soft); color: var(--kf-ink); box-shadow: 0 0 0 3px var(--kf-accent-soft); }
 .kf-tool:active:not(:disabled) { transform: scale(.96); }
-.kf-swatch { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--kf-hairline); cursor: pointer; transition: transform .15s var(--kf-ease); }
+.kf-swatch { width: 18px; height: 18px; padding: 0; flex: none; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--kf-hairline); cursor: pointer; transition: transform .15s var(--kf-ease); }
+.kf-swatch:focus-visible { outline: 2px solid var(--kf-accent); outline-offset: 2px; }
 .kf-swatch:hover { transform: scale(1.15); }
 .kf-swatch.active { box-shadow: 0 0 0 2px var(--kf-accent); transform: scale(1.1); }
 .kf-tool:disabled { color: var(--kf-faint); cursor: default; }
@@ -232,7 +236,7 @@
 .kf-zoom-hint { font-size: 12px; color: var(--kf-muted); }
 .kf-stage:focus-visible { outline: 2px solid var(--kf-accent); outline-offset: 2px; }
 /* Keeps Cancel and the confirm button reachable once the toolbar wraps on a phone. */
-@media (max-width: 640px) { .kf-stage { height: 50vh; } .kf-tools { border-radius: 18px; } }
+@media (max-width: 640px) { .kf-stage { height: 50vh; } .kf-tools { flex-wrap: wrap; border-radius: 18px; row-gap: 6px; } .kf-tools > span[style] { display: none; } .kf-group + .kf-group { border-left: none; padding-left: 0; margin-left: 0; } }
 /* Space, pinch and Ctrl + scroll mean nothing on touch; the buttons and Pan tool are the path there. */
 @media (hover: none) and (pointer: coarse) { .kf-zoom-hint { display: none; } }
 
