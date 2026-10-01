@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.1
+
+- `STATE_LABELS` / `STATE_COLORS` include `testing` ("Testing", cyan). KIDS reports cards in the Testing column as their own state instead of "In progress".
+
 ## 1.1.1
 
 - Subpath imports now resolve in tools that ignore `package.json` `"exports"` (Create React App's Jest 26/27, older webpack, TypeScript `moduleResolution: node`). `adapters/kids/` and `adapters/reads-graphql/` hold stub `package.json` files that point into `dist/`, and `styles.css` is also copied to the package root. `"exports"` is unchanged. `test/legacy-resolve.test.mjs` checks every exported subpath this way.

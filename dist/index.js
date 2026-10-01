@@ -915,8 +915,8 @@ import React4, { useEffect as useEffect5, useState as useState4 } from "react";
 import { Empty, Skeleton, Tag, Typography as Typography2, Button as Button3 } from "antd";
 import { jsx as jsx4, jsxs as jsxs3 } from "react/jsx-runtime";
 var { Text: Text2 } = Typography2;
-var STATE_COLORS = { new: "blue", acknowledged: "geekblue", in_progress: "gold", done: "green", dismissed: "default" };
-var STATE_LABELS = { new: "New", acknowledged: "Acknowledged", in_progress: "In progress", done: "Done", dismissed: "Dismissed" };
+var STATE_COLORS = { new: "blue", acknowledged: "geekblue", in_progress: "gold", testing: "cyan", done: "green", dismissed: "default" };
+var STATE_LABELS = { new: "New", acknowledged: "Acknowledged", in_progress: "In progress", testing: "Testing", done: "Done", dismissed: "Dismissed" };
 var KIND_LABELS = { bug: "Bug", idea: "Idea", question: "Question", "report-tool": "Report tool" };
 function relTime(iso) {
   const d = new Date(iso);
@@ -1296,7 +1296,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.7.0";
+var WIDGET_VERSION = "1.7.1";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT = 280;
