@@ -955,8 +955,8 @@ var import_react5 = __toESM(require("react"), 1);
 var import_antd3 = require("antd");
 var import_jsx_runtime4 = require("react/jsx-runtime");
 var { Text: Text2 } = import_antd3.Typography;
-var STATE_COLORS = { new: "blue", acknowledged: "geekblue", in_progress: "gold", done: "green", dismissed: "default" };
-var STATE_LABELS = { new: "New", acknowledged: "Acknowledged", in_progress: "In progress", done: "Done", dismissed: "Dismissed" };
+var STATE_COLORS = { new: "blue", acknowledged: "geekblue", in_progress: "gold", testing: "cyan", done: "green", dismissed: "default" };
+var STATE_LABELS = { new: "New", acknowledged: "Acknowledged", in_progress: "In progress", testing: "Testing", done: "Done", dismissed: "Dismissed" };
 var KIND_LABELS = { bug: "Bug", idea: "Idea", question: "Question", "report-tool": "Report tool" };
 function relTime(iso) {
   const d = new Date(iso);
@@ -1336,7 +1336,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.7.0";
+var WIDGET_VERSION = "1.7.1";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT = 280;
