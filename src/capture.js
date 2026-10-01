@@ -171,9 +171,9 @@ const SCROLLING = new Set(['auto', 'scroll', 'overlay']);
 // and its scrollTop is the document's), or its overflow went to the viewport
 // (html overflow visible) but the copy keeps it, so a height:100% body would
 // be cut off at one window height. null otherwise.
-function bodyScroller(body) {
-  if (body === document.scrollingElement) return null;
-  const s = getComputedStyle(body);
+function bodyScroller(body, scrollingElement, getStyle) {
+  if (body === scrollingElement) return null;
+  const s = getStyle(body);
   const overflows = (SCROLLING.has(s.overflowY) && body.scrollHeight > body.clientHeight)
     || (SCROLLING.has(s.overflowX) && body.scrollWidth > body.clientWidth);
   if (!body.scrollTop && !body.scrollLeft && !overflows) return null;
@@ -223,21 +223,41 @@ function unscrollRootClone(rootClone, scroller) {
   }
 }
 
+/**
+ * What captureQuick measures before rendering, with the live globals passed in
+ * so node --test can drive it with plain objects. Returns `scroller` (the
+ * body's own scroll offsets and content size, or null when the document
+ * scrolls), `pad` and `frame` (see coverViewportOrigin), `rootScroll` (the
+ * offset pinViewportPositioned moves root-relative pins by) and the viewport
+ * size.
+ */
+export function quickCaptureGeometry({
+  body, scrollingElement, viewportWidth, viewportHeight, getStyle = (el) => getComputedStyle(el),
+}) {
+  // Read before rendering: snapdom draws the body's whole layout box, so on a
+  // page that scrolls the document itself it would be the full page height.
+  const bodyRect = body.getBoundingClientRect();
+  const scroller = bodyScroller(body, scrollingElement, getStyle);
+  const { pad, frame } = coverViewportOrigin(scrollerFrame(scroller
+    ? { bodyRect, scrollLeft: scroller.left, scrollTop: scroller.top, scrollWidth: scroller.width, scrollHeight: scroller.height }
+    : { bodyRect }));
+  const rootScroll = scroller ? { left: scroller.left, top: scroller.top } : { left: 0, top: 0 };
+  return { scroller, pad, frame, rootScroll, viewportWidth, viewportHeight };
+}
+
 export async function captureQuick({ scale } = {}) {
   const { snapdom } = await import('@zumer/snapdom');
   const dpr = window.devicePixelRatio || 1;
   const s = scale || Math.min(dpr, 2);
-  // Read before rendering: snapdom draws the body's whole layout box, so on a
-  // page that scrolls the document itself it would be the full page height.
-  const bodyRect = document.body.getBoundingClientRect();
-  const scroller = bodyScroller(document.body);
-  const { pad, frame } = coverViewportOrigin(scrollerFrame(scroller
-    ? { bodyRect, scrollLeft: scroller.left, scrollTop: scroller.top, scrollWidth: scroller.width, scrollHeight: scroller.height }
-    : { bodyRect }));
+  const {
+    scroller, pad, frame, rootScroll, viewportWidth, viewportHeight,
+  } = quickCaptureGeometry({
+    body: document.body,
+    scrollingElement: document.scrollingElement,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+  });
   const background = canvasBackground();
-  const rootScroll = scroller ? { left: scroller.left, top: scroller.top } : { left: 0, top: 0 };
-  const viewportWidth = window.innerWidth;
-  const viewportHeight = window.innerHeight;
   const result = await snapdom(document.body, {
     scale: s,
     // s already includes the pixel ratio; without this snapdom multiplies by it again.
