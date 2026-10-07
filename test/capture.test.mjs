@@ -407,7 +407,7 @@ const scrolledBody = () => ({
 });
 const bodyStyle = () => ({ overflowY: 'auto', overflowX: 'visible' });
 
-test('body scrolled to 1200 inside a 1024x768 viewport, window not scrolled: crop starts 1200px down', () => {
+test('BNFR-212: body scrolled to 1200 inside a 1024x768 viewport, window not scrolled: crop starts 1200px down', () => {
   const body = scrolledBody();
   const html = { scrollTop: 0, scrollLeft: 0 }; // window.scrollY 0
   const g = quickCaptureGeometry({ body, scrollingElement: html, viewportWidth: 1024, viewportHeight: 768, getStyle: bodyStyle });
@@ -421,7 +421,7 @@ test('body scrolled to 1200 inside a 1024x768 viewport, window not scrolled: cro
   assert.deepEqual([r2.sy, r2.sh, r2.dy, r2.dh], [2400, 1536, 0, 1536]);
 });
 
-test('quirks mode: body is the scrollingElement, so the crop follows the body rect', () => {
+test('BNFR-212: quirks mode: body is the scrollingElement, so the crop follows the body rect', () => {
   const body = { ...scrolledBody(), getBoundingClientRect: () => ({ left: 0, top: -1200, width: 1024, height: 6000 }) };
   const g = quickCaptureGeometry({ body, scrollingElement: body, viewportWidth: 1024, viewportHeight: 768, getStyle: bodyStyle });
   assert.equal(g.scroller, null);
