@@ -333,8 +333,8 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
   const desktop = isDesktop();
 
   const includedPopover = (
-    <div className="kf-context" style={{ maxWidth: 420 }}>
-      <Text type="secondary" style={{ fontSize: 12 }}>Sent with the report so the developer can reproduce it. Nothing you type elsewhere, no passwords.</Text>
+    <div className="kf-context" style={{ maxWidth: 'min(420px, calc(100vw - 32px))' }}>
+      <Text type="secondary" style={{ fontSize: 13 }}>Sent with the report so the developer can reproduce it. Nothing you type elsewhere, no passwords.</Text>
       <pre>{JSON.stringify({
         page: typeof window !== 'undefined' ? window.location.pathname : null,
         browser: context?.browser ? `${context.browser.name} ${context.browser.version} · ${context.browser.os} ${context.browser.osVersion || ''}` : null,
