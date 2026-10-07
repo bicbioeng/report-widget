@@ -1412,7 +1412,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.9.0";
+var WIDGET_VERSION = "1.9.1";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT = 280;
@@ -1799,8 +1799,8 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
   const problemLink = /* @__PURE__ */ jsx5("button", { type: "button", className: "kf-link", onClick: openProblem, children: "Problem with this form?" });
   const transcriptionAvailable = Boolean((_a = config == null ? void 0 : config.transcription) == null ? void 0 : _a.available);
   const desktop = isDesktop();
-  const includedPopover = /* @__PURE__ */ jsxs4("div", { className: "kf-context", style: { maxWidth: 420 }, children: [
-    /* @__PURE__ */ jsx5(Text3, { type: "secondary", style: { fontSize: 12 }, children: "Sent with the report so the developer can reproduce it. Nothing you type elsewhere, no passwords." }),
+  const includedPopover = /* @__PURE__ */ jsxs4("div", { className: "kf-context", style: { maxWidth: "min(420px, calc(100vw - 32px))" }, children: [
+    /* @__PURE__ */ jsx5(Text3, { type: "secondary", style: { fontSize: 13 }, children: "Sent with the report so the developer can reproduce it. Nothing you type elsewhere, no passwords." }),
     /* @__PURE__ */ jsx5("pre", { children: JSON.stringify({
       page: typeof window !== "undefined" ? window.location.pathname : null,
       browser: (context == null ? void 0 : context.browser) ? `${context.browser.name} ${context.browser.version} \xB7 ${context.browser.os} ${context.browser.osVersion || ""}` : null,

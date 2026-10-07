@@ -13,6 +13,7 @@
   --kf-on-lime: #1D2400;
   --kf-glass: rgba(255, 255, 255, .72);
   --kf-glass-strong: rgba(255, 255, 255, .9);
+  --kf-surface: #FFFFFF;
   --kf-glass-edge: rgba(255, 255, 255, .85);
   --kf-hairline: rgba(20, 20, 43, .1);
   --kf-panel: linear-gradient(160deg, rgba(255, 255, 255, .86), rgba(244, 243, 255, .78) 55%, rgba(236, 249, 242, .78));
@@ -35,6 +36,7 @@
   --kf-on-lime: #122000;
   --kf-glass: rgba(6, 46, 43, .62);
   --kf-glass-strong: rgba(8, 56, 52, .92);
+  --kf-surface: #083834;
   --kf-glass-edge: rgba(120, 255, 220, .18);
   --kf-hairline: rgba(120, 255, 220, .14);
   --kf-panel: linear-gradient(160deg, rgba(8, 56, 52, .9), rgba(4, 36, 34, .88));
@@ -258,12 +260,15 @@
 /* Fallbacks: a host's dropdowns render outside the token scope. */
 .kf-st--acknowledged { color: var(--kf-info, #0B6BAA); } .kf-st--in_progress { color: var(--kf-warn, #B45309); }
 .kf-st--testing { color: var(--kf-accent, #6B63D9); } .kf-st--done { color: var(--kf-ok, #0F7B53); }
-/* Popovers are portaled to <body>, outside .kf-root: .kf-pop carries the tokens there. */
-.kf-pop .ant-popover-inner { background: var(--kf-glass-strong); backdrop-filter: blur(18px) saturate(160%); -webkit-backdrop-filter: blur(18px) saturate(160%); border: 1px solid var(--kf-hairline); border-radius: 16px; box-shadow: var(--kf-shadow); }
+/* Popovers are portaled to <body>, outside .kf-root: .kf-pop carries the tokens there.
+   Solid, unblurred surface: the report modal behind must not show through small text. */
+.kf-pop .ant-popover-inner { background: var(--kf-surface); backdrop-filter: none; -webkit-backdrop-filter: none; border: 1px solid var(--kf-hairline); border-radius: 16px; box-shadow: var(--kf-shadow); }
 .kf-pop .ant-popover-title { font: 600 13.5px var(--kf-font); color: var(--kf-ink); }
-.kf-pop .ant-popover-arrow::before { background: var(--kf-glass-strong); }
+.kf-pop .ant-popover-arrow::before { background: var(--kf-surface); }
 .kf-pop .ant-typography-secondary { color: var(--kf-muted) !important; }
-.kf-pop .kf-context pre { margin: 10px 0 0; }
+/* What gets included: --kf-muted is under 7:1 on the solid panel, so the description uses ink. */
+.kf-pop .kf-context .ant-typography-secondary { color: var(--kf-ink) !important; }
+.kf-pop .kf-context pre { margin: 10px 0 0; font-size: 12.5px; line-height: 1.5; color: #F1F5F9; background: var(--kf-stage); }
 
 /* Inbox (KIDS) */
 .fi-page { padding: 4px 8px 32px; }
