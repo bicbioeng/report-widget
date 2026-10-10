@@ -125,23 +125,37 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
   }, [open, prefill]);
 
   // A quiet first screenshot when the form opens — no permission, no click.
+  // The dialog stays up: captureQuick leaves its whole overlay out. It waits for
+  // web fonts, the dialog's enter motion (antd's is 0.3s) and the scroll lock's
+  // layout, so the page is captured as it looks once the dialog has settled.
   useEffect(() => {
     if (!open || autoShotDone.current || shot || done || prefill?.noAutoShot) return;
     autoShotDone.current = true;
     let alive = true;
+    let finished = false;
     (async () => {
       try {
         setCapturing(true);
+        await document.fonts?.ready;
+        await new Promise((r) => setTimeout(r, 350));
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        if (!alive) return;
         const r = await captureQuick();
         if (alive && r.blob) setShot({ ...r, url: URL.createObjectURL(r.blob) });
       } catch (e) {
         console.warn('[feedback] quick capture failed:', e.message);
-        noteError('auto-screenshot', e);
+        if (alive) noteError('auto-screenshot', e);
       } finally {
+        finished = true;
         if (alive) setCapturing(false);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+      setCapturing(false);
+      // Closed before the screenshot arrived: try again on the next open.
+      if (!finished) autoShotDone.current = false;
+    };
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Screen recording finished → keep it.
