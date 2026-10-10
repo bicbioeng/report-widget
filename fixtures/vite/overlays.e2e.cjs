@@ -33,6 +33,73 @@ const log = (...a) => console.log(...a);
   const closeReport = async () => { await page.click('.kids-feedback-modal-wrap button[aria-label="Close"]'); await settle(); assert.equal(await reportOpen(), false); };
   const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 
+  // Read the actual attachment pixels, rather than the scaled thumbnail.
+  const pixels = () => page.evaluate(async () => {
+    const img = document.querySelector('.kf-shot img');
+    await img.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    return { width: canvas.width, height: canvas.height,
+      data: Array.from(ctx.getImageData(0, 0, canvas.width, canvas.height).data) };
+  });
+  const firstScreenshot = async (host = false) => {
+    await page.waitForSelector('.kf-shot img', { timeout: 30000 });
+    const first = await pixels();
+    const scale = first.width / 1280;
+    // Empty page background, or white interior of the host Modal.
+    const point = host ? await page.evaluate(() => {
+      const r = [...document.querySelectorAll('.ant-modal-content')]
+        .find((el) => el.textContent.includes('Host modal')).getBoundingClientRect();
+      return { x: r.left + 30, y: r.top + 65 };
+    }) : { x: 100, y: 300 };
+    const offset = (Math.round(point.y * scale) * first.width + Math.round(point.x * scale)) * 4;
+    assert.ok(first.data.slice(offset, offset + 3).every((v) => v >= 250),
+      'first screenshot retains the white background without the report mask tint');
+    // Remove it, then take the manual one ("Take screenshot" shows only without a shot).
+    await page.click('.kf-shot-actions button.ant-btn-dangerous');
+    await page.click('button:has-text("Take screenshot")');
+    await page.waitForFunction(() => document.querySelector('.kf-shot img')?.complete, null, { timeout: 30000 });
+    const manual = await pixels();
+    assert.equal(first.width, manual.width);
+    assert.equal(first.height, manual.height);
+    // Compare page heading and small button text, or host title/body text.
+    const rect = host ? await page.evaluate(() => {
+      const r = [...document.querySelectorAll('.ant-modal-content')]
+        .find((el) => el.textContent.includes('Host modal')).getBoundingClientRect();
+      return { x: r.left + 24, y: r.top + 20, w: 420, h: 100 };
+    }) : { x: 24, y: 24, w: 320, h: 120 };
+    let difference = 0; let samples = 0; let dark = 0;
+    for (let y = Math.round(rect.y * scale); y < (rect.y + rect.h) * scale; y++) {
+      for (let x = Math.round(rect.x * scale); x < (rect.x + rect.w) * scale; x++) {
+        const i = (y * first.width + x) * 4;
+        if (manual.data[i] < 180) dark++;
+        for (let c = 0; c < 3; c++) {
+          difference += Math.abs(first.data[i + c] - manual.data[i + c]); samples++;
+        }
+      }
+    }
+    assert.ok(dark > 100, 'comparison includes text');
+    assert.ok(difference / samples < 2, `first screenshot matches sharp retake: ${difference / samples}`);
+    await settle();
+    assert.ok(await reportOpen(), 'report remains visible after capture');
+    assert.ok((await probe('.kf-textarea textarea')).hit, 'report field receives clicks');
+    await page.fill('.kf-textarea textarea', 'Screenshot is sharp');
+    assert.equal(await page.inputValue('.kf-textarea textarea'), 'Screenshot is sharp');
+    await page.fill('.kf-textarea textarea', '');
+    log(`[first screenshot] ${host ? 'host modal' : 'plain page'} colours, sharpness and form passed`);
+  };
+
+  await page.click('.kids-feedback-fab');
+  await firstScreenshot();
+  // Decoding both screenshots can slow the leave motion past settle().
+  await page.click('.kids-feedback-modal-wrap button[aria-label="Close"]');
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.kids-feedback-modal-wrap')).display === 'none');
+  // A fresh form is needed: closing intentionally preserves the draft/shot.
+  await page.reload();
+  await page.waitForSelector('.kids-feedback-fab');
+
   // 1. Modal open → Report reachable, host modal stays open.
   await page.click('#open-modal'); await settle();
   let fab = await probe('.kids-feedback-fab');
@@ -46,6 +113,7 @@ const log = (...a) => console.log(...a);
   log('[modal] after FAB click: reportOpen', await reportOpen(), 'hostModalOpen', await hostModalOpen());
   assert.ok(await reportOpen(), 'report modal opened');
   assert.ok(await hostModalOpen(), 'host modal still open');
+  await firstScreenshot(true);
   await shot('02-modal-report-opened-over-modal.png');
   const under = await probe('.kids-feedback-fab');
   log('[modal] with the report modal open, elementFromPoint at FAB centre', under.top, 'hit FAB:', under.hit);

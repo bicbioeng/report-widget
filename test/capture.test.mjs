@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   viewportCropRect, pinViewportPositioned, scrollerFrame, coverViewportOrigin, quickCaptureGeometry,
+  WIDGET_SELECTORS, excludedFromCapture,
 } from '../src/capture.js';
 
 function assertWithinViewport(r, viewportWidth, viewportHeight, scale) {
@@ -516,4 +517,39 @@ test('html overflow hidden: a one-window body with overflow hidden really clips,
   const body = fullHeightBody(1440, 878, 0, fakeHtml('hidden'));
   const g = quickCaptureGeometry({ body, scrollingElement: { scrollTop: 0 }, viewportWidth: 1440, viewportHeight: 878, getStyle: bodyOverflow({ overflowY: 'hidden', overflowX: 'hidden' }) });
   assert.equal(g.scroller, null);
+});
+
+// Minimal elements for the exclude list: `matches` understands class selectors
+// (`.a`, `.a.b`), which is all WIDGET_SELECTORS holds.
+const el = (className, parent = null) => ({
+  className,
+  parentElement: parent,
+  matches: (sel) => sel.split('.').slice(1).every((c) => className.split(' ').includes(c)),
+});
+// antd 5 portals each Modal as div.ant-modal-root (+ rootClassName) holding
+// the mask and the wrap as siblings; a Drawer as div.ant-drawer holding its mask
+// and content wrapper.
+const antdModal = (rootClassName = '', wrapClassName = '') => {
+  const root = el(`ant-modal-root ${rootClassName}`.trim(), el('body'));
+  return { mask: el('ant-modal-mask', root), wrap: el(`ant-modal-wrap ${wrapClassName}`.trim(), root) };
+};
+
+test('the Report dialog backdrop mask is left out of the screenshot, as well as the dialog', () => {
+  assert.ok(WIDGET_SELECTORS.every((s) => typeof s === 'string'));
+  const report = antdModal('kf-root', 'kids-feedback-modal-wrap');
+  assert.equal(excludedFromCapture(report.wrap), true, 'dialog');
+  assert.equal(excludedFromCapture(report.mask), true, 'its blurred, tinted mask');
+  const annotator = antdModal('kf-root', 'kids-feedback-annotator-wrap');
+  assert.equal(excludedFromCapture(annotator.mask), true, 'annotator mask');
+  assert.equal(excludedFromCapture(el('kids-feedback-fab', el('kids-feedback-root', el('body')))), true, 'Report button');
+});
+
+test('a host antd Modal or Drawer open under the Report dialog stays in the screenshot', () => {
+  const host = antdModal();
+  assert.equal(excludedFromCapture(host.mask), false, 'host modal mask');
+  assert.equal(excludedFromCapture(el('ant-modal-content', host.wrap)), false, 'host modal');
+  const drawer = el('ant-drawer ant-drawer-right ant-drawer-open', el('body'));
+  assert.equal(excludedFromCapture(el('ant-drawer-mask', drawer)), false, 'host drawer mask');
+  assert.equal(excludedFromCapture(el('ant-drawer-content-wrapper', drawer)), false, 'host drawer');
+  assert.equal(excludedFromCapture(el('page', el('body'))), false, 'page content');
 });

@@ -1081,7 +1081,7 @@ function MyReports({ onOpenTicket, refreshKey }) {
 }
 
 // src/capture.js
-var WIDGET_SELECTORS = [".kids-feedback-root", ".kids-feedback-modal-wrap", ".kids-feedback-pill"];
+var WIDGET_SELECTORS = [".kids-feedback-root", ".kf-root", ".kids-feedback-modal-wrap", ".kids-feedback-pill"];
 function supportsExactCapture() {
   var _a;
   return typeof navigator !== "undefined" && Boolean((_a = navigator.mediaDevices) == null ? void 0 : _a.getDisplayMedia) && window.isSecureContext;
@@ -1412,7 +1412,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.9.1";
+var WIDGET_VERSION = "1.9.2";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT = 280;
@@ -1579,20 +1579,29 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     if (!open || autoShotDone.current || shot || done || (prefill == null ? void 0 : prefill.noAutoShot)) return;
     autoShotDone.current = true;
     let alive = true;
+    let finished = false;
     (async () => {
+      var _a2;
       try {
         setCapturing(true);
+        await ((_a2 = document.fonts) == null ? void 0 : _a2.ready);
+        await new Promise((r2) => setTimeout(r2, 350));
+        await new Promise((r2) => requestAnimationFrame(() => requestAnimationFrame(r2)));
+        if (!alive) return;
         const r = await captureQuick();
         if (alive && r.blob) setShot({ ...r, url: URL.createObjectURL(r.blob) });
       } catch (e) {
         console.warn("[feedback] quick capture failed:", e.message);
-        noteError("auto-screenshot", e);
+        if (alive) noteError("auto-screenshot", e);
       } finally {
+        finished = true;
         if (alive) setCapturing(false);
       }
     })();
     return () => {
       alive = false;
+      setCapturing(false);
+      if (!finished) autoShotDone.current = false;
     };
   }, [open]);
   useEffect6(() => {

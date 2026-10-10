@@ -13,7 +13,18 @@
  * calling either so it is not in the picture.
  */
 
-const WIDGET_SELECTORS = ['.kids-feedback-root', '.kids-feedback-modal-wrap', '.kids-feedback-pill'];
+// .kf-root is the portal root of the Report and annotator Modals (their
+// rootClassName), so it takes in the blurred, tinted mask next to the wrap.
+// Host Modals and Drawers do not carry it and stay in the picture.
+export const WIDGET_SELECTORS = ['.kids-feedback-root', '.kf-root', '.kids-feedback-modal-wrap', '.kids-feedback-pill'];
+
+/** Whether snapdom leaves `el` out: it, or an element it is inside, matches WIDGET_SELECTORS. */
+export function excludedFromCapture(el) {
+  for (let n = el; n; n = n.parentElement) {
+    if (WIDGET_SELECTORS.some((s) => n.matches?.(s))) return true;
+  }
+  return false;
+}
 
 export function supportsExactCapture() {
   return typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getDisplayMedia) && window.isSecureContext;
