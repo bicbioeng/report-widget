@@ -28,6 +28,10 @@ function Page() {
   const click = (name) => () => window.__clicks.push(name);
   return (
     <main style={{ padding: 24 }}>
+      <header style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+        <span id="fixture-logo" role="img" aria-label="Fixture logo" style={{ padding: '6px 12px', borderRadius: 8, background: '#14142B', color: '#fff', fontWeight: 700 }}>Fixture logo</span>
+        <nav><a href="#docs" className="nav-link">Docs</a></nav>
+      </header>
       <h1>Overlays fixture</h1>
       <Button id="open-modal" onClick={() => setModal(true)}>Open modal</Button>{' '}
       <Button id="open-drawer" onClick={() => setDrawer(true)}>Open drawer</Button>

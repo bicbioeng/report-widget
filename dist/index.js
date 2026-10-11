@@ -22,7 +22,8 @@ import {
   StopOutlined as StopOutlined2,
   CheckCircleFilled,
   CloseOutlined as CloseOutlined2,
-  LoadingOutlined as LoadingOutlined2
+  LoadingOutlined as LoadingOutlined2,
+  AimOutlined
 } from "@ant-design/icons";
 
 // src/Annotator.jsx
@@ -1082,6 +1083,15 @@ function MyReports({ onOpenTicket, refreshKey }) {
 
 // src/capture.js
 var WIDGET_SELECTORS = [".kids-feedback-root", ".kf-root", ".kids-feedback-modal-wrap", ".kids-feedback-pill"];
+function excludedFromCapture(el) {
+  for (let n = el; n; n = n.parentElement) {
+    if (WIDGET_SELECTORS.some((s) => {
+      var _a;
+      return (_a = n.matches) == null ? void 0 : _a.call(n, s);
+    })) return true;
+  }
+  return false;
+}
 function supportsExactCapture() {
   var _a;
   return typeof navigator !== "undefined" && Boolean((_a = navigator.mediaDevices) == null ? void 0 : _a.getDisplayMedia) && window.isSecureContext;
@@ -1358,6 +1368,313 @@ function blobToFile(blob, name, type) {
   return new File([blob], name, { type: type || blob.type || "application/octet-stream" });
 }
 
+// src/elementPicker.js
+var MAX_CLASSES = 8;
+var MAX_TEXT = 200;
+var MAX_HTML = 2e3;
+var MAX_DEPTH = 5;
+var CHIP_TEXT = 40;
+var FORM_TAGS = /* @__PURE__ */ new Set(["input", "textarea", "select", "option"]);
+var SECRET_ATTR = /token|passw(or)?d|pwd|secret|api[-_]?key|auth|session|csrf|xsrf|cookie|credential/i;
+var tagOf = (el) => String((el == null ? void 0 : el.tagName) || "").toLowerCase();
+var attr = (el, name) => {
+  var _a;
+  const v = (_a = el == null ? void 0 : el.getAttribute) == null ? void 0 : _a.call(el, name);
+  return v == null || v === "" ? null : String(v);
+};
+var collapse = (s) => String(s != null ? s : "").replace(/\s+/g, " ").trim();
+var clip = (s, max) => s.length > max ? `${s.slice(0, max - 1)}\u2026` : s;
+var escapeIdent = (s) => typeof CSS !== "undefined" && CSS.escape ? CSS.escape(s) : String(s).replace(/[^\w-]/g, (c) => `\\${c}`);
+function classesOf(el) {
+  return String(attr(el, "class") || "").split(/\s+/).filter(Boolean);
+}
+function segment(el) {
+  if (el.id) return `#${escapeIdent(el.id)}`;
+  const tag = tagOf(el);
+  const cls = classesOf(el).slice(0, 2).map((c) => `.${escapeIdent(c)}`).join("");
+  const siblings = el.parentElement ? [...el.parentElement.children].filter((c) => c.tagName === el.tagName) : [];
+  const nth = siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(el) + 1})` : "";
+  return `${tag}${cls}${nth}`;
+}
+function selectorFor(el) {
+  const parts = [];
+  for (let n = el, depth = 0; n && depth <= MAX_DEPTH; n = n.parentElement, depth += 1) {
+    if (/^(html|body)$/.test(tagOf(n))) break;
+    parts.unshift(segment(n));
+    if (n.id) break;
+  }
+  return parts.join(" > ");
+}
+function safeHtml(html) {
+  let s = String(html || "").slice(0, MAX_HTML * 4);
+  s = s.replace(/<([a-zA-Z][\w:-]*)((?:\s+[^\s"'>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*(\/?)>/g, (m, tag, attrs, slash) => {
+    const form = FORM_TAGS.has(tag.toLowerCase());
+    const kept = (attrs.match(/[^\s"'>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?/g) || []).filter((a) => {
+      const name = a.split("=")[0].trim().toLowerCase();
+      if (SECRET_ATTR.test(name)) return false;
+      return !(form && (name === "value" || name === "selected" || name === "checked"));
+    });
+    return `<${tag}${kept.map((a) => ` ${a}`).join("")}${slash ? " /" : ""}>`;
+  });
+  s = s.replace(/(<textarea\b[^>]*>)[\s\S]*?(?:<\/textarea>|$)/gi, "$1</textarea>");
+  s = s.replace(/<[^>]*$/, "");
+  return s.length > MAX_HTML ? `${s.slice(0, MAX_HTML - 1)}\u2026` : s;
+}
+function roundRect(r) {
+  var _a, _b, _c, _d, _e, _f;
+  return {
+    x: Math.round((_b = (_a = r == null ? void 0 : r.x) != null ? _a : r == null ? void 0 : r.left) != null ? _b : 0),
+    y: Math.round((_d = (_c = r == null ? void 0 : r.y) != null ? _c : r == null ? void 0 : r.top) != null ? _d : 0),
+    width: Math.round((_e = r == null ? void 0 : r.width) != null ? _e : 0),
+    height: Math.round((_f = r == null ? void 0 : r.height) != null ? _f : 0)
+  };
+}
+function describeElement(el, { getRect = (e) => e.getBoundingClientRect() } = {}) {
+  var _a;
+  const tag = tagOf(el);
+  const text = FORM_TAGS.has(tag) ? "" : collapse((_a = el.innerText) != null ? _a : el.textContent).slice(0, MAX_TEXT);
+  return {
+    tag,
+    id: el.id || null,
+    classes: classesOf(el).slice(0, MAX_CLASSES),
+    selector: selectorFor(el),
+    text: text || null,
+    ariaLabel: attr(el, "aria-label"),
+    role: attr(el, "role"),
+    href: typeof el.href === "string" && el.href ? el.href : attr(el, "href"),
+    alt: attr(el, "alt"),
+    rect: roundRect(getRect(el)),
+    html: safeHtml(el.outerHTML)
+  };
+}
+function pickTarget(node) {
+  let el = node;
+  while (el && el.nodeType !== 1) el = el.parentElement || el.parentNode || null;
+  if (!el || /^(html|body)$/.test(tagOf(el))) return null;
+  return excludedFromCapture(el) ? null : el;
+}
+var nameOf = (d) => clip(collapse(d.text || d.ariaLabel || d.alt || ""), CHIP_TEXT);
+function elementName(d) {
+  const name = nameOf(d);
+  return name ? `${d.tag} \u201C${name}\u201D` : d.tag;
+}
+function pickSummary(d) {
+  const name = nameOf(d);
+  return name ? `${d.selector} \u201C${name}\u201D` : d.selector;
+}
+function chipLabel(d) {
+  return `Element: ${elementName(d)}`;
+}
+function outlineRect(rect, { imageWidth, imageHeight, viewportWidth }) {
+  const k = viewportWidth > 0 ? imageWidth / viewportWidth : 1;
+  const clamp2 = (v, max) => Math.min(max, Math.max(0, Math.round(v)));
+  const x = clamp2(rect.x * k, imageWidth);
+  const y = clamp2(rect.y * k, imageHeight);
+  const width = clamp2((rect.x + rect.width) * k, imageWidth) - x;
+  const height = clamp2((rect.y + rect.height) * k, imageHeight) - y;
+  return width > 0 && height > 0 ? { x, y, width, height } : null;
+}
+async function drawOutline(shot, rect, viewportWidth = window.innerWidth) {
+  var _a;
+  const img = await createImageBitmap(shot.blob);
+  const canvas = document.createElement("canvas");
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0);
+  (_a = img.close) == null ? void 0 : _a.call(img);
+  const r = outlineRect(rect, { imageWidth: canvas.width, imageHeight: canvas.height, viewportWidth });
+  if (r) {
+    const k = viewportWidth > 0 ? canvas.width / viewportWidth : 1;
+    const lw = 3 * k;
+    const x0 = Math.max(lw / 2 + k, r.x - lw / 2);
+    const y0 = Math.max(lw / 2 + k, r.y - lw / 2);
+    const x1 = Math.min(canvas.width - lw / 2 - k, r.x + r.width + lw / 2);
+    const y1 = Math.min(canvas.height - lw / 2 - k, r.y + r.height + lw / 2);
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#FFFFFF";
+    ctx.lineWidth = lw + 2 * k;
+    ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+    ctx.strokeStyle = "#6B63D9";
+    ctx.lineWidth = lw;
+    ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  }
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  return { blob, width: canvas.width, height: canvas.height };
+}
+var overlaps = (a, b) => a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+var isWithin = (node, ancestor) => {
+  for (let n = node; n; n = n.parentElement || n.parentNode) if (n === ancestor) return true;
+  return false;
+};
+function frameAt(doc, x, y, under, getRect = (e) => e.getBoundingClientRect()) {
+  var _a;
+  if (typeof x !== "number" || typeof y !== "number" || !under) return null;
+  let hit = null;
+  for (const f of ((_a = doc.querySelectorAll) == null ? void 0 : _a.call(doc, "iframe, frame")) || []) {
+    if (f === under || !isWithin(f, under)) continue;
+    const r = getRect(f);
+    if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) hit = f;
+  }
+  return hit;
+}
+var LOCKS = 'style[rc-util-key^="rc-util-locker-"]';
+function scrollLockKeys(doc = typeof document !== "undefined" ? document : null) {
+  var _a;
+  return [...((_a = doc == null ? void 0 : doc.querySelectorAll) == null ? void 0 : _a.call(doc, LOCKS)) || []].map((n) => n.getAttribute("rc-util-key"));
+}
+function suspendScrollLocks(keys, doc = document) {
+  var _a;
+  const off = [...((_a = doc.querySelectorAll) == null ? void 0 : _a.call(doc, LOCKS)) || []].filter((n) => keys.includes(n.getAttribute("rc-util-key"))).map((n) => {
+    const media = n.getAttribute("media");
+    n.setAttribute("media", "not all");
+    return [n, media];
+  });
+  return () => {
+    for (const [n, media] of off) {
+      if (media == null) n.removeAttribute("media");
+      else n.setAttribute("media", media);
+    }
+  };
+}
+function startElementPick({
+  onHover,
+  signal,
+  doc = document,
+  win = window,
+  getRect = (e) => e.getBoundingClientRect()
+} = {}) {
+  return new Promise((resolve) => {
+    var _a, _b, _c, _d;
+    const make = (tag, className) => {
+      const n = doc.createElement(tag);
+      n.className = className;
+      return n;
+    };
+    const layer = make("div", "kf-root kf-picker");
+    const box = make("div", "kf-picker-box");
+    const label = make("div", "kf-picker-label");
+    const banner = make("div", "kf-picker-banner");
+    banner.setAttribute("role", "status");
+    banner.setAttribute("aria-live", "polite");
+    const hint = make("span", "kf-picker-hint");
+    const touch = Boolean((_b = (_a = win.matchMedia) == null ? void 0 : _a.call(win, "(hover: none) and (pointer: coarse)")) == null ? void 0 : _b.matches);
+    hint.textContent = touch ? "Tap an element to attach it" : "Click an element to attach it \xB7 Esc to cancel";
+    const cancel = make("button", "kf-picker-cancel");
+    cancel.type = "button";
+    cancel.textContent = "Cancel";
+    banner.appendChild(hint);
+    banner.appendChild(cancel);
+    const frames = make("style", "");
+    frames.textContent = "iframe, frame { pointer-events: none !important; }";
+    layer.appendChild(frames);
+    layer.appendChild(box);
+    layer.appendChild(label);
+    layer.appendChild(banner);
+    doc.body.appendChild(layer);
+    let hovered = null;
+    let bannerTop = ((_c = banner.getBoundingClientRect) == null ? void 0 : _c.call(banner)) || null;
+    const place = () => {
+      if (!hovered) {
+        box.style.display = "none";
+        label.style.display = "none";
+        return;
+      }
+      const r = getRect(hovered);
+      Object.assign(box.style, {
+        display: "block",
+        left: `${r.left}px`,
+        top: `${r.top}px`,
+        width: `${r.width}px`,
+        height: `${r.height}px`
+      });
+      label.textContent = elementName({
+        tag: tagOf(hovered),
+        text: FORM_TAGS.has(tagOf(hovered)) ? null : collapse(hovered.textContent).slice(0, 80),
+        ariaLabel: attr(hovered, "aria-label"),
+        alt: attr(hovered, "alt")
+      });
+      label.style.display = "block";
+      const lh = label.offsetHeight || 22;
+      const lw = label.offsetWidth || 0;
+      const vw = win.innerWidth || 0;
+      const vh = win.innerHeight || 0;
+      const above = r.top - lh - 4;
+      const top = above >= 4 ? above : Math.min(r.bottom + 4, Math.max(4, vh - lh - 4));
+      label.style.top = `${top}px`;
+      label.style.left = `${Math.max(4, Math.min(r.left, vw - lw - 4))}px`;
+      banner.className = `kf-picker-banner${overlaps(r, bannerTop) ? " bottom" : ""}`;
+    };
+    const swallow = (e) => {
+      var _a2, _b2, _c2;
+      (_a2 = e.preventDefault) == null ? void 0 : _a2.call(e);
+      (_b2 = e.stopPropagation) == null ? void 0 : _b2.call(e);
+      (_c2 = e.stopImmediatePropagation) == null ? void 0 : _c2.call(e);
+    };
+    let finish;
+    const targetOf = (e) => pickTarget(frameAt(doc, e.clientX, e.clientY, e.target, getRect) || e.target);
+    const onMove = (e) => {
+      const el = targetOf(e);
+      if (el === hovered) return;
+      hovered = el;
+      place();
+      if (el) onHover == null ? void 0 : onHover(el);
+    };
+    const onPress = (e) => {
+      if (isWithin(e.target, cancel)) return;
+      swallow(e);
+      if (e.type === "pointerdown") onMove(e);
+    };
+    const onClick = (e) => {
+      swallow(e);
+      if (isWithin(e.target, cancel)) {
+        finish(null);
+        return;
+      }
+      const el = targetOf(e);
+      if (el) finish({ element: el, description: describeElement(el, { getRect }) });
+    };
+    const onKey = (e) => {
+      if (e.key !== "Escape" && e.key !== "Esc") return;
+      swallow(e);
+      finish(null);
+    };
+    const onViewport = () => {
+      var _a2;
+      if (hovered) {
+        banner.className = "kf-picker-banner";
+        bannerTop = ((_a2 = banner.getBoundingClientRect) == null ? void 0 : _a2.call(banner)) || null;
+      }
+      place();
+    };
+    const onAbort = () => finish(null);
+    const listeners = [
+      ["pointermove", onMove],
+      ["pointerdown", onPress],
+      ["pointerup", onPress],
+      ["mousedown", onPress],
+      ["mouseup", onPress],
+      ["click", onClick],
+      ["dblclick", onPress],
+      ["keydown", onKey],
+      ["scroll", onViewport],
+      ["resize", onViewport]
+    ];
+    for (const [type, fn] of listeners) win.addEventListener(type, fn, true);
+    (_d = signal == null ? void 0 : signal.addEventListener) == null ? void 0 : _d.call(signal, "abort", onAbort);
+    finish = (result) => {
+      var _a2, _b2;
+      for (const [type, fn] of listeners) win.removeEventListener(type, fn, true);
+      (_a2 = signal == null ? void 0 : signal.removeEventListener) == null ? void 0 : _a2.call(signal, "abort", onAbort);
+      (_b2 = layer.parentNode) == null ? void 0 : _b2.removeChild(layer);
+      finish = () => {
+      };
+      resolve(result);
+    };
+    if (signal == null ? void 0 : signal.aborted) finish(null);
+  });
+}
+
 // src/metadata.js
 import Bowser from "bowser";
 function browserInfo() {
@@ -1412,12 +1729,12 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.9.2";
+var WIDGET_VERSION = "1.10.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
-var MAX_TEXT = 280;
+var MAX_TEXT2 = 280;
 var MAX_STACK = 2e3;
-function clipText(v, max = MAX_TEXT) {
+function clipText(v, max = MAX_TEXT2) {
   if (v == null) return null;
   const s = String(v).trim();
   if (!s) return null;
@@ -1442,7 +1759,7 @@ function buildDiagnostics({
   form = {},
   now = /* @__PURE__ */ new Date()
 } = {}) {
-  var _a, _b;
+  var _a, _b, _c;
   const f = form;
   return {
     widgetVersion: WIDGET_VERSION,
@@ -1462,7 +1779,8 @@ function buildDiagnostics({
       files: (f.files || []).map((x) => {
         var _a2;
         return { name: x.name, type: x.type || null, size: (_a2 = x.size) != null ? _a2 : null };
-      })
+      }),
+      element: ((_c = f.element) == null ? void 0 : _c.selector) || null
     },
     failedAttachments: (failedAttachments || []).map((a) => ({ name: a.name, error: clipText(a.error, 300) })),
     browser: browser || null,
@@ -1538,6 +1856,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
   const [shot, setShot] = useState5(null);
   const [annotateTarget, setAnnotateTarget] = useState5(null);
   const [capturing, setCapturing] = useState5(false);
+  const [picked, setPicked] = useState5(null);
   const [voice, setVoice] = useState5(null);
   const [screen, setScreen] = useState5(null);
   const [files, setFiles] = useState5([]);
@@ -1550,6 +1869,12 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
   const [problem, setProblem] = useState5(null);
   const autoShotDone = useRef3(false);
   const copyRef = useRef3(null);
+  const pickRef = useRef3(null);
+  const refocusPick = useRef3(false);
+  const pickAbort = useRef3(null);
+  const locksBeforeOpen = useRef3(null);
+  if (!open) locksBeforeOpen.current = null;
+  else if (!locksBeforeOpen.current) locksBeforeOpen.current = scrollLockKeys();
   const noteError = (stage, e) => setLastError(errorRecord(stage, e));
   const screenRec = useMediaRecorder({ kind: "screen", maxMs: 2 * 60 * 1e3 });
   const closeAnnotator = () => {
@@ -1626,6 +1951,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     setSteps("");
     if (shot == null ? void 0 : shot.url) URL.revokeObjectURL(shot.url);
     setShot(null);
+    setPicked(null);
     setVoice(null);
     setScreen(null);
     setFiles([]);
@@ -1674,6 +2000,55 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
       setHidden(false);
     }
   };
+  const pickElement = async () => {
+    var _a2;
+    (_a2 = pickAbort.current) == null ? void 0 : _a2.abort();
+    const ctrl = new AbortController();
+    pickAbort.current = ctrl;
+    const { signal } = ctrl;
+    let restoreLocks = null;
+    setHidden(true);
+    try {
+      await new Promise((r2) => setTimeout(r2, 120));
+      if (signal.aborted) return;
+      const before = locksBeforeOpen.current || [];
+      restoreLocks = suspendScrollLocks(scrollLockKeys().filter((k) => !before.includes(k)));
+      const result = await startElementPick({ signal });
+      if (!result || signal.aborted) return;
+      const { description } = result;
+      setPicked({ description });
+      setCapturing(true);
+      const r = await captureQuick();
+      const outlined = await drawOutline(r, description.rect, window.innerWidth);
+      if (signal.aborted) return;
+      if (shot == null ? void 0 : shot.url) URL.revokeObjectURL(shot.url);
+      setShot({ ...r, ...outlined, url: URL.createObjectURL(outlined.blob) });
+    } catch (e) {
+      if (signal.aborted) return;
+      message2.warning(e.message || "Screenshot failed.");
+      noteError("element-pick", e);
+    } finally {
+      restoreLocks == null ? void 0 : restoreLocks();
+      if (pickAbort.current === ctrl) pickAbort.current = null;
+      refocusPick.current = !signal.aborted;
+      setCapturing(false);
+      setHidden(false);
+    }
+  };
+  useEffect6(() => {
+    var _a2;
+    if (!open) (_a2 = pickAbort.current) == null ? void 0 : _a2.abort();
+  }, [open]);
+  useEffect6(() => () => {
+    var _a2;
+    return (_a2 = pickAbort.current) == null ? void 0 : _a2.abort();
+  }, []);
+  useEffect6(() => {
+    var _a2;
+    if (hidden || !refocusPick.current) return;
+    refocusPick.current = false;
+    (_a2 = pickRef.current) == null ? void 0 : _a2.focus();
+  }, [hidden]);
   const startScreenRecording = async () => {
     setHidden(true);
     await screenRec.start();
@@ -1704,7 +2079,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     const warnings = [];
     const failed = [];
     try {
-      const ctx = { ...meta(), ...snapshotContext() };
+      const ctx = { ...meta(), ...snapshotContext(), element: (picked == null ? void 0 : picked.description) || null };
       const created = await transport.submitFeedback({
         kind,
         severity: kind === "bug" ? severity : null,
@@ -1768,7 +2143,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
         failedAttachments: failedUploads,
         browser,
         viewport,
-        form: { kind, severity, summary, expected, steps, transcript: voice == null ? void 0 : voice.transcript, shot, voice, screen, files }
+        form: { kind, severity, summary, expected, steps, transcript: voice == null ? void 0 : voice.transcript, shot, voice, screen, files, element: picked == null ? void 0 : picked.description }
       })
     });
   };
@@ -1817,9 +2192,15 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
       build: context == null ? void 0 : context.buildSha,
       actingAs: (context == null ? void 0 : context.impersonating) || void 0,
       recentRoutes: ((context == null ? void 0 : context.routeHistory) || []).slice(-6).map((r) => r.path),
-      recentErrors: ((context == null ? void 0 : context.errors) || []).slice(-8).map((e) => `${e.level}: ${e.message}`)
+      recentErrors: ((context == null ? void 0 : context.errors) || []).slice(-8).map((e) => `${e.level}: ${e.message}`),
+      element: picked ? pickSummary(picked.description) : void 0
     }, null, 2) })
   ] });
+  const pickButton = /* @__PURE__ */ jsx5(Button4, { ref: pickRef, size: "small", icon: /* @__PURE__ */ jsx5(AimOutlined, {}), onClick: pickElement, disabled: capturing || hidden, children: picked ? "Pick again" : "Pick an element" });
+  const pickedChip = picked && /* @__PURE__ */ jsx5(Tooltip2, { title: picked.description.selector, children: /* @__PURE__ */ jsxs4("span", { className: "kf-file kf-pick-chip", children: [
+    /* @__PURE__ */ jsx5("span", { className: "kf-pick-name", children: chipLabel(picked.description) }),
+    /* @__PURE__ */ jsx5("button", { type: "button", onClick: () => setPicked(null), "aria-label": "Remove picked element", children: /* @__PURE__ */ jsx5(CloseOutlined2, {}) })
+  ] }) });
   const form = done ? /* @__PURE__ */ jsxs4("div", { className: "kf-success", children: [
     /* @__PURE__ */ jsx5(CheckCircleFilled, { style: { fontSize: 40, color: "#22c55e" } }),
     /* @__PURE__ */ jsx5("div", { className: "key", children: done.ticketKey }),
@@ -1899,7 +2280,12 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
           ] })
         ] }) : /* @__PURE__ */ jsxs4(Space3, { wrap: true, children: [
           /* @__PURE__ */ jsx5(Button4, { size: "small", icon: /* @__PURE__ */ jsx5(CameraOutlined, {}), loading: capturing, onClick: retakeQuick, children: "Take screenshot" }),
-          desktop && supportsExactCapture() && /* @__PURE__ */ jsx5(Button4, { size: "small", onClick: retakeExact, loading: capturing, children: "Exact pixels\u2026" })
+          desktop && supportsExactCapture() && /* @__PURE__ */ jsx5(Button4, { size: "small", onClick: retakeExact, loading: capturing, children: "Exact pixels\u2026" }),
+          pickButton
+        ] }),
+        (shot || picked) && /* @__PURE__ */ jsxs4("div", { className: "kf-pick-row", children: [
+          pickedChip,
+          shot && pickButton
         ] }),
         (shot == null ? void 0 : shot.annotated) && /* @__PURE__ */ jsx5(Text3, { type: "secondary", style: { fontSize: 11.5 }, children: "Annotated" })
       ] }),

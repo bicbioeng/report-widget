@@ -17,11 +17,15 @@ import { Modal, Input, Button, Tabs, Typography, Space, Tooltip, message, Collap
 import {
   BugOutlined, BulbOutlined, QuestionCircleOutlined, CameraOutlined, EditOutlined, ReloadOutlined,
   DeleteOutlined, PaperClipOutlined, VideoCameraOutlined, StopOutlined, CheckCircleFilled, CloseOutlined, LoadingOutlined,
+  AimOutlined,
 } from '@ant-design/icons';
 import Annotator from './Annotator';
 import VoicePanel from './VoicePanel';
 import MyReports from './MyReports';
 import { captureQuick, captureExact, supportsExactCapture, blobToFile } from './capture';
+import {
+  startElementPick, drawOutline, chipLabel, pickSummary, scrollLockKeys, suspendScrollLocks,
+} from './elementPicker';
 import { useMediaRecorder, formatMs, extensionFor } from './recorders';
 import { snapshotContext } from './contextBuffer';
 import { pageMetadata, isDesktop } from './metadata';
@@ -83,6 +87,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
   const [shot, setShot] = useState(null);       // { blob, url, width, height, method, annotated }
   const [annotateTarget, setAnnotateTarget] = useState(null); // null | { kind: 'shot' } | { kind: 'file', index, file, url }
   const [capturing, setCapturing] = useState(false);
+  const [picked, setPicked] = useState(null);   // { description } — see describeElement
   const [voice, setVoice] = useState(null);     // { blob, mimeType, durationMs, filename, transcript, transcriptSource }
   const [screen, setScreen] = useState(null);   // { blob, mimeType, durationMs, filename }
   const [files, setFiles] = useState([]);
@@ -95,6 +100,14 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
   const [problem, setProblem] = useState(null);           // { text, status, diagnostics, error?, copyText?, ticketKey? }
   const autoShotDone = useRef(false);
   const copyRef = useRef(null);
+  const pickRef = useRef(null);
+  const refocusPick = useRef(false);
+  const pickAbort = useRef(null);
+  // The page's scroll locks from before this dialog opened, read while rendering
+  // the open, before antd adds its own: the ones added since are this dialog's.
+  const locksBeforeOpen = useRef(null);
+  if (!open) locksBeforeOpen.current = null;
+  else if (!locksBeforeOpen.current) locksBeforeOpen.current = scrollLockKeys();
   const noteError = (stage, e) => setLastError(errorRecord(stage, e));
 
   const screenRec = useMediaRecorder({ kind: 'screen', maxMs: 2 * 60 * 1000 });
@@ -173,7 +186,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
   const reset = useCallback(() => {
     setKind('bug'); setSeverity('annoying'); setSummary(''); setExpected(''); setSteps('');
     if (shot?.url) URL.revokeObjectURL(shot.url);
-    setShot(null); setVoice(null); setScreen(null); setFiles([]); setDone(null); setProgress('');
+    setShot(null); setPicked(null); setVoice(null); setScreen(null); setFiles([]); setDone(null); setProgress('');
     setLastError(null); setFailedUploads([]); setProblem(null);
     autoShotDone.current = false;
   }, [shot]);
@@ -212,6 +225,55 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
     }
   };
 
+  // Pick one page element, then retake the quick screenshot with it outlined.
+  // On cancel the screenshot and any earlier pick stay as they were.
+  // Closing or unmounting the dialog aborts it, which takes the pick layer and
+  // its listeners off the page and drops the late screenshot.
+  const pickElement = async () => {
+    pickAbort.current?.abort();
+    const ctrl = new AbortController();
+    pickAbort.current = ctrl;
+    const { signal } = ctrl;
+    let restoreLocks = null;
+    setHidden(true);
+    try {
+      await new Promise((r) => setTimeout(r, 120));
+      if (signal.aborted) return;
+      // The hidden dialog's scroll lock would stop a touch drag scrolling the page.
+      const before = locksBeforeOpen.current || [];
+      restoreLocks = suspendScrollLocks(scrollLockKeys().filter((k) => !before.includes(k)));
+      const result = await startElementPick({ signal });
+      if (!result || signal.aborted) return;
+      const { description } = result;
+      setPicked({ description });
+      setCapturing(true);
+      const r = await captureQuick();
+      const outlined = await drawOutline(r, description.rect, window.innerWidth);
+      if (signal.aborted) return;
+      if (shot?.url) URL.revokeObjectURL(shot.url);
+      setShot({ ...r, ...outlined, url: URL.createObjectURL(outlined.blob) });
+    } catch (e) {
+      if (signal.aborted) return;
+      message.warning(e.message || 'Screenshot failed.');
+      noteError('element-pick', e);
+    } finally {
+      // After the screenshot, so the page is captured with the rect it was picked at.
+      restoreLocks?.();
+      if (pickAbort.current === ctrl) pickAbort.current = null;
+      refocusPick.current = !signal.aborted;
+      setCapturing(false);
+      setHidden(false);
+    }
+  };
+  useEffect(() => { if (!open) pickAbort.current?.abort(); }, [open]);
+  useEffect(() => () => pickAbort.current?.abort(), []);
+  // Back to the pick button once the dialog is visible again (hidden elements cannot take focus).
+  useEffect(() => {
+    if (hidden || !refocusPick.current) return;
+    refocusPick.current = false;
+    pickRef.current?.focus();
+  }, [hidden]);
+
   const startScreenRecording = async () => {
     setHidden(true);
     await screenRec.start();
@@ -246,7 +308,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
     const warnings = [];
     const failed = [];
     try {
-      const ctx = { ...meta(), ...snapshotContext() };
+      const ctx = { ...meta(), ...snapshotContext(), element: picked?.description || null };
       const created = await transport.submitFeedback({
         kind,
         severity: kind === 'bug' ? severity : null,
@@ -310,7 +372,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
         failedAttachments: failedUploads,
         browser,
         viewport,
-        form: { kind, severity, summary, expected, steps, transcript: voice?.transcript, shot, voice, screen, files },
+        form: { kind, severity, summary, expected, steps, transcript: voice?.transcript, shot, voice, screen, files, element: picked?.description },
       }),
     });
   };
@@ -357,8 +419,23 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
         actingAs: context?.impersonating || undefined,
         recentRoutes: (context?.routeHistory || []).slice(-6).map((r) => r.path),
         recentErrors: (context?.errors || []).slice(-8).map((e) => `${e.level}: ${e.message}`),
+        element: picked ? pickSummary(picked.description) : undefined,
       }, null, 2)}</pre>
     </div>
+  );
+
+  const pickButton = (
+    <Button ref={pickRef} size="small" icon={<AimOutlined />} onClick={pickElement} disabled={capturing || hidden}>
+      {picked ? 'Pick again' : 'Pick an element'}
+    </Button>
+  );
+  const pickedChip = picked && (
+    <Tooltip title={picked.description.selector}>
+      <span className="kf-file kf-pick-chip">
+        <span className="kf-pick-name">{chipLabel(picked.description)}</span>
+        <button type="button" onClick={() => setPicked(null)} aria-label="Remove picked element"><CloseOutlined /></button>
+      </span>
+    </Tooltip>
   );
 
   const form = done ? (
@@ -450,7 +527,14 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
             <Space wrap>
               <Button size="small" icon={<CameraOutlined />} loading={capturing} onClick={retakeQuick}>Take screenshot</Button>
               {desktop && supportsExactCapture() && <Button size="small" onClick={retakeExact} loading={capturing}>Exact pixels…</Button>}
+              {pickButton}
             </Space>
+          )}
+          {(shot || picked) && (
+            <div className="kf-pick-row">
+              {pickedChip}
+              {shot && pickButton}
+            </div>
           )}
           {shot?.annotated && <Text type="secondary" style={{ fontSize: 11.5 }}>Annotated</Text>}
         </div>
