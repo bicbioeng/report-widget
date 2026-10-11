@@ -34,7 +34,7 @@ export function errorRecord(stage, e) {
 /**
  * input: {
  *   state, progress?, lastError?, failedAttachments?, browser?, viewport?,
- *   form?: { kind, severity, summary, expected, steps, transcript, shot, voice, screen, files }
+ *   form?: { kind, severity, summary, expected, steps, transcript, shot, voice, screen, files, element }
  * }
  */
 export function buildDiagnostics({
@@ -57,6 +57,7 @@ export function buildDiagnostics({
       voiceNote: f.voice ? { durationMs: f.voice.durationMs ?? null, mimeType: f.voice.mimeType || null } : null,
       screenRecording: f.screen ? { durationMs: f.screen.durationMs ?? null, mimeType: f.screen.mimeType || null } : null,
       files: (f.files || []).map((x) => ({ name: x.name, type: x.type || null, size: x.size ?? null })),
+      element: f.element?.selector || null,
     },
     failedAttachments: (failedAttachments || []).map((a) => ({ name: a.name, error: clipText(a.error, 300) })),
     browser: browser || null,
