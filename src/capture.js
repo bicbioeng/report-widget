@@ -320,7 +320,7 @@ export async function captureQuick({ scale } = {}) {
   return { blob, width: r.outWidth, height: r.outHeight, method: 'quick' };
 }
 
-function loadImage(blob) {
+export function loadImage(blob) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob);
     const img = new Image();
