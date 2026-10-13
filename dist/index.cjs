@@ -1768,7 +1768,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.10.0";
+var WIDGET_VERSION = "1.11.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT2 = 280;
@@ -1842,6 +1842,32 @@ function buildReportToolPayload({ text, diagnostics, pageUrl = null, route = nul
     // Inside context (not top level): both adapters and the KIDS server keep
     // `context` as-is, while unknown top-level fields are dropped.
     context: { ...context, diagnostics }
+  };
+}
+
+// src/reportForm.js
+function pickOffer({ shot, picked, capturing, hidden }) {
+  return {
+    label: picked ? "Pick again" : "Pick an element",
+    disabled: Boolean(capturing || hidden),
+    placement: shot ? "row" : "actions",
+    row: Boolean(shot || picked),
+    chip: Boolean(picked)
+  };
+}
+function feedbackPayload({ kind, severity, summary, expected, steps, voice, picked, context, pageUrl, route }) {
+  var _a;
+  return {
+    kind,
+    severity: kind === "bug" ? severity : null,
+    summary: summary.trim(),
+    expected: expected.trim() || null,
+    steps: steps.trim() || null,
+    transcript: ((_a = voice == null ? void 0 : voice.transcript) == null ? void 0 : _a.trim()) || null,
+    transcriptSource: (voice == null ? void 0 : voice.transcript) ? voice.transcriptSource || null : null,
+    pageUrl,
+    route,
+    context: { ...context, element: (picked == null ? void 0 : picked.description) || null }
   };
 }
 
@@ -2111,26 +2137,25 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
   const context = (0, import_react6.useMemo)(() => open ? { ...meta(), ...snapshotContext() } : null, [open, done]);
   const canSubmit = summary.trim().length > 0 && !submitting;
   const submit = async () => {
-    var _a2;
     if (!canSubmit) return;
     setSubmitting(true);
     setProgress("Creating the ticket\u2026");
     const warnings = [];
     const failed = [];
     try {
-      const ctx = { ...meta(), ...snapshotContext(), element: (picked == null ? void 0 : picked.description) || null };
-      const created = await transport.submitFeedback({
+      const ctx = { ...meta(), ...snapshotContext() };
+      const created = await transport.submitFeedback(feedbackPayload({
         kind,
-        severity: kind === "bug" ? severity : null,
-        summary: summary.trim(),
-        expected: expected.trim() || null,
-        steps: steps.trim() || null,
-        transcript: ((_a2 = voice == null ? void 0 : voice.transcript) == null ? void 0 : _a2.trim()) || null,
-        transcriptSource: (voice == null ? void 0 : voice.transcript) ? voice.transcriptSource || null : null,
+        severity,
+        summary,
+        expected,
+        steps,
+        voice,
+        picked,
+        context: ctx,
         pageUrl: window.location.href,
-        route: window.location.pathname,
-        context: ctx
-      });
+        route: window.location.pathname
+      }));
       const uploads = [];
       if (shot == null ? void 0 : shot.blob) uploads.push(blobToFile(shot.blob, shot.annotated ? "screenshot-annotated.png" : "screenshot.png", "image/png"));
       if (voice == null ? void 0 : voice.blob) uploads.push(blobToFile(voice.blob, voice.filename, voice.mimeType));
@@ -2235,8 +2260,9 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
       element: picked ? pickSummary(picked.description) : void 0
     }, null, 2) })
   ] });
-  const pickButton = /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Button, { ref: pickRef, size: "small", icon: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_icons3.AimOutlined, {}), onClick: pickElement, disabled: capturing || hidden, children: picked ? "Pick again" : "Pick an element" });
-  const pickedChip = picked && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Tooltip, { title: picked.description.selector, children: /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("span", { className: "kf-file kf-pick-chip", children: [
+  const offer = pickOffer({ shot, picked, capturing, hidden });
+  const pickButton = /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Button, { ref: pickRef, size: "small", icon: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_icons3.AimOutlined, {}), onClick: pickElement, disabled: offer.disabled, children: offer.label });
+  const pickedChip = offer.chip && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Tooltip, { title: picked.description.selector, children: /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("span", { className: "kf-file kf-pick-chip", children: [
     /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { className: "kf-pick-name", children: chipLabel(picked.description) }),
     /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("button", { type: "button", onClick: () => setPicked(null), "aria-label": "Remove picked element", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_icons3.CloseOutlined, {}) })
   ] }) });
@@ -2320,11 +2346,11 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
         ] }) : /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_antd4.Space, { wrap: true, children: [
           /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Button, { size: "small", icon: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_icons3.CameraOutlined, {}), loading: capturing, onClick: retakeQuick, children: "Take screenshot" }),
           desktop && supportsExactCapture() && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Button, { size: "small", onClick: retakeExact, loading: capturing, children: "Exact pixels\u2026" }),
-          pickButton
+          offer.placement === "actions" && pickButton
         ] }),
-        (shot || picked) && /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { className: "kf-pick-row", children: [
+        offer.row && /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { className: "kf-pick-row", children: [
           pickedChip,
-          shot && pickButton
+          offer.placement === "row" && pickButton
         ] }),
         (shot == null ? void 0 : shot.annotated) && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Text3, { type: "secondary", style: { fontSize: 11.5 }, children: "Annotated" })
       ] }),
