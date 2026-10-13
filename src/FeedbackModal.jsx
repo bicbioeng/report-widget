@@ -31,6 +31,7 @@ import { snapshotContext } from './contextBuffer';
 import { pageMetadata, isDesktop } from './metadata';
 import { useReportConfig } from './ReportProvider';
 import { buildDiagnostics, buildReportToolPayload, errorRecord } from './diagnostics';
+import { pickOffer, feedbackPayload } from './reportForm';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -308,19 +309,13 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
     const warnings = [];
     const failed = [];
     try {
-      const ctx = { ...meta(), ...snapshotContext(), element: picked?.description || null };
-      const created = await transport.submitFeedback({
-        kind,
-        severity: kind === 'bug' ? severity : null,
-        summary: summary.trim(),
-        expected: expected.trim() || null,
-        steps: steps.trim() || null,
-        transcript: voice?.transcript?.trim() || null,
-        transcriptSource: voice?.transcript ? voice.transcriptSource || null : null,
+      const ctx = { ...meta(), ...snapshotContext() };
+      const created = await transport.submitFeedback(feedbackPayload({
+        kind, severity, summary, expected, steps, voice, picked,
+        context: ctx,
         pageUrl: window.location.href,
         route: window.location.pathname,
-        context: ctx,
-      });
+      }));
       const uploads = [];
       if (shot?.blob) uploads.push(blobToFile(shot.blob, shot.annotated ? 'screenshot-annotated.png' : 'screenshot.png', 'image/png'));
       if (voice?.blob) uploads.push(blobToFile(voice.blob, voice.filename, voice.mimeType));
@@ -424,12 +419,13 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
     </div>
   );
 
+  const offer = pickOffer({ shot, picked, capturing, hidden });
   const pickButton = (
-    <Button ref={pickRef} size="small" icon={<AimOutlined />} onClick={pickElement} disabled={capturing || hidden}>
-      {picked ? 'Pick again' : 'Pick an element'}
+    <Button ref={pickRef} size="small" icon={<AimOutlined />} onClick={pickElement} disabled={offer.disabled}>
+      {offer.label}
     </Button>
   );
-  const pickedChip = picked && (
+  const pickedChip = offer.chip && (
     <Tooltip title={picked.description.selector}>
       <span className="kf-file kf-pick-chip">
         <span className="kf-pick-name">{chipLabel(picked.description)}</span>
@@ -527,13 +523,13 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
             <Space wrap>
               <Button size="small" icon={<CameraOutlined />} loading={capturing} onClick={retakeQuick}>Take screenshot</Button>
               {desktop && supportsExactCapture() && <Button size="small" onClick={retakeExact} loading={capturing}>Exact pixels…</Button>}
-              {pickButton}
+              {offer.placement === 'actions' && pickButton}
             </Space>
           )}
-          {(shot || picked) && (
+          {offer.row && (
             <div className="kf-pick-row">
               {pickedChip}
-              {shot && pickButton}
+              {offer.placement === 'row' && pickButton}
             </div>
           )}
           {shot?.annotated && <Text type="secondary" style={{ fontSize: 11.5 }}>Annotated</Text>}
