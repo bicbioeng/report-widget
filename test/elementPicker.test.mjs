@@ -1,9 +1,10 @@
 // Element pick (BICBIOENG-99). Runs against src directly with plain objects, no DOM.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   describeElement, pickTarget, chipLabel, pickSummary, outlineRect, startElementPick,
-  frameAt, scrollLockKeys, suspendScrollLocks,
+  frameAt, scrollLockKeys, suspendScrollLocks, shotAfterPick, drawOutline, PICK_SHOT_WAIT_MS,
 } from '../src/elementPicker.js';
 
 // Just enough of an Element: tag, attributes, tree, text, class selectors for matches().
@@ -316,4 +317,170 @@ test('scroll locks: only the given locks are switched off, and restored after', 
   assert.equal('media' in ours.attrs, false);
   assert.equal(printOnly.attrs.media, 'print');
   assert.equal(host.attrs.media, undefined);
+});
+
+// After a pick (BICBIOENG-109): the dialog must come back even if the screenshot never finishes.
+const pngShot = (width = 1280, height = 800) => ({ blob: new Blob(['png'], { type: 'image/png' }), width, height, method: 'quick' });
+const after = (ms, v) => new Promise((r) => setTimeout(() => r(v), ms));
+
+test('after a pick: a screenshot that never finishes still lets the pick step finish in its limit', async () => {
+  const t0 = Date.now();
+  const step = await shotAfterPick({
+    capture: () => new Promise(() => {}), rect: { x: 0, y: 0, width: 10, height: 10 }, viewportWidth: 1280, waitMs: 30,
+  });
+  assert.ok(Date.now() - t0 < 1000, 'resolved at the limit');
+  assert.equal(step.produced, false, 'no new screenshot');
+  assert.equal(step.shot, null);
+  assert.equal(step.error, null);
+  assert.ok(step.late instanceof Promise);
+  assert.ok(PICK_SHOT_WAIT_MS > 1000 && PICK_SHOT_WAIT_MS < 2000, 'a little over a second by default');
+});
+
+test('after a pick: a shot ready in time is produced, outlined from the picked rect', async () => {
+  const seen = [];
+  const outlinedBlob = new Blob(['outlined']);
+  const step = await shotAfterPick({
+    capture: async () => pngShot(),
+    outline: async (r, rect, vw) => { seen.push([r.width, rect, vw]); return { blob: outlinedBlob, width: r.width, height: r.height }; },
+    rect: { x: 1, y: 2, width: 3, height: 4 }, viewportWidth: 640, waitMs: 500,
+  });
+  assert.equal(step.produced, true);
+  assert.equal(step.shot.blob, outlinedBlob);
+  assert.equal(step.shot.method, 'quick');
+  assert.deepEqual(seen, [[1280, { x: 1, y: 2, width: 3, height: 4 }, 640]]);
+  assert.equal((await step.late).shot, step.shot);
+});
+
+test('after a pick: a late shot is handed to the caller, but dropped once the pick is aborted', async () => {
+  const outline = async (r) => ({ ...r, blob: new Blob(['outlined']) });
+  const step = await shotAfterPick({ capture: () => after(60, pngShot()), outline, rect: { x: 0, y: 0, width: 5, height: 5 }, viewportWidth: 1280, waitMs: 10 });
+  assert.equal(step.produced, false, 'not ready at the limit');
+  const late = await step.late;
+  assert.ok(late.shot, 'the late outlined shot arrives');
+  assert.equal(late.shot.width, 1280);
+
+  const ac = new AbortController();
+  const aborted = await shotAfterPick({ capture: () => after(60, pngShot()), outline, rect: { x: 0, y: 0, width: 5, height: 5 }, viewportWidth: 1280, signal: ac.signal, waitMs: 10 });
+  ac.abort(); // the dialog closed, or 'Pick again'
+  assert.deepEqual(await aborted.late, { shot: null, error: null }, 'dropped');
+
+  const ac2 = new AbortController();
+  const t0 = Date.now();
+  const early = shotAfterPick({ capture: () => new Promise(() => {}), rect: { x: 0, y: 0, width: 5, height: 5 }, viewportWidth: 1280, signal: ac2.signal, waitMs: 5000 });
+  ac2.abort();
+  assert.equal((await early).produced, false);
+  assert.ok(Date.now() - t0 < 1000, 'an abort ends the wait at once');
+});
+
+test('after a pick: an abort after the limit, while the shot is still rendering, drops it when it lands', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const ac = new AbortController();
+  const step = await shotAfterPick({ capture: () => held, rect: { x: 0, y: 0, width: 5, height: 5 }, viewportWidth: 1280, signal: ac.signal, waitMs: 10 });
+  assert.equal(step.produced, false, 'the dialog is back before the shot');
+  ac.abort(); // 'Take screenshot', 'Exact pixels…', Remove, annotate or removing the chip
+  release(pngShot());
+  assert.deepEqual(await step.late, { shot: null, error: null }, 'the newer screenshot stays');
+});
+
+test('the dialog ends a pending pick screenshot on every other change to the screenshot', () => {
+  const jsx = readFileSync(new URL('../src/FeedbackModal.jsx', import.meta.url), 'utf8');
+  // Handlers: their first lines. Buttons: their own line.
+  for (const [start, len] of [
+    ['const reset = useCallback(', 80],
+    ['const retakeExact = async', 80],
+    ['const retakeQuick = async', 80],
+  ]) {
+    const i = jsx.indexOf(start);
+    assert.ok(i >= 0, start);
+    assert.match(jsx.slice(i, i + len), /endPendingPick\(\)/, start);
+  }
+  for (const mark of ['aria-label="Remove picked element"', '<Tooltip title="Remove">']) {
+    const line = jsx.split('\n').find((l) => l.includes(mark));
+    assert.ok(line, mark);
+    assert.match(line, /endPendingPick\(\)/, mark);
+  }
+  // The screenshot's Annotator, the one after the files' Annotator.
+  const annotate = jsx.slice(jsx.indexOf('<Annotator\n            src={shot.url}'));
+  assert.match(annotate.slice(0, 300), /onDone=\{\(blob\) => \{\s*endPendingPick\(\);/);
+});
+
+test('after a pick: a capture or outline failure is reported, not thrown', async () => {
+  const boom = new Error('snapdom failed');
+  const a = await shotAfterPick({ capture: async () => { throw boom; }, rect: { x: 0, y: 0, width: 5, height: 5 }, viewportWidth: 1280, waitMs: 500 });
+  assert.equal(a.produced, false);
+  assert.equal(a.error, boom);
+  assert.equal((await a.late).error, boom);
+
+  const bad = new Error('outline failed');
+  const b = await shotAfterPick({ capture: async () => pngShot(), outline: () => { throw bad; }, rect: { x: 0, y: 0, width: 5, height: 5 }, viewportWidth: 1280, waitMs: 500 });
+  assert.equal(b.produced, false);
+  assert.equal(b.error, bad);
+});
+
+// drawOutline against stubbed browser globals, restored after each test.
+function withGlobals(stubs, fn) {
+  return async () => {
+    const saved = Object.keys(stubs).map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+    for (const [k, v] of Object.entries(stubs)) {
+      Object.defineProperty(globalThis, k, { value: v, configurable: true, writable: true });
+    }
+    try {
+      await fn();
+    } finally {
+      for (const [k, d] of saved) {
+        if (d) Object.defineProperty(globalThis, k, d);
+        else delete globalThis[k];
+      }
+    }
+  };
+}
+function fakeCanvas({ ctx = 'stub', toBlob } = {}) {
+  const strokes = [];
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext: () => (ctx === 'stub' ? { drawImage() {}, strokeRect: (...a) => strokes.push(a) } : ctx),
+    toBlob: toBlob || ((cb) => setTimeout(() => cb(new Blob(['outlined'], { type: 'image/png' })), 0)),
+  };
+  return { canvas, strokes };
+}
+class FakeImage {
+  constructor() { this.naturalWidth = 0; this.naturalHeight = 0; }
+  set src(u) { this.naturalWidth = 1280; this.naturalHeight = 800; setTimeout(() => this.onload?.(), 0); }
+}
+const fakeUrl = { createObjectURL: () => 'blob:x', revokeObjectURL() {} };
+
+test('drawOutline: without createImageBitmap it decodes through an Image and keeps the size', async () => {
+  const { canvas, strokes } = fakeCanvas();
+  await withGlobals({
+    createImageBitmap: undefined, Image: FakeImage, URL: { ...fakeUrl },
+    document: { createElement: () => canvas },
+  }, async () => {
+    const shot = pngShot();
+    const out = await drawOutline(shot, { x: 100, y: 100, width: 50, height: 20 }, 1280);
+    assert.deepEqual([out.width, out.height], [1280, 800]);
+    assert.notEqual(out.blob, shot.blob, 'an outlined copy');
+    assert.equal(strokes.length, 2, 'halo and stroke');
+  })();
+});
+
+test('drawOutline: no drawing context, or a toBlob that never calls back, gives the original shot', async () => {
+  const bitmap = async () => ({ width: 1280, height: 800, close() {} });
+  const shot = pngShot();
+  const original = { blob: shot.blob, width: 1280, height: 800 };
+  const noCtx = fakeCanvas({ ctx: null });
+  await withGlobals({ createImageBitmap: bitmap, document: { createElement: () => noCtx.canvas } }, async () => {
+    assert.deepEqual(await drawOutline(shot, { x: 0, y: 0, width: 5, height: 5 }, 1280), original);
+  })();
+  const nullBlob = fakeCanvas({ toBlob: (cb) => cb(null) });
+  await withGlobals({ createImageBitmap: bitmap, document: { createElement: () => nullBlob.canvas } }, async () => {
+    assert.deepEqual(await drawOutline(shot, { x: 0, y: 0, width: 5, height: 5 }, 1280), original);
+  })();
+  const never = fakeCanvas({ toBlob: () => {} });
+  await withGlobals({ createImageBitmap: bitmap, document: { createElement: () => never.canvas } }, async () => {
+    const t0 = Date.now();
+    assert.deepEqual(await drawOutline(shot, { x: 0, y: 0, width: 5, height: 5 }, 1280, { waitMs: 30 }), original);
+    assert.ok(Date.now() - t0 < 1000, 'gave up at the limit');
+  })();
 });

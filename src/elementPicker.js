@@ -8,9 +8,10 @@
  * The describe/target/label/rect helpers are pure: `getRect` is injectable and
  * they only read tagName, attributes, parentElement, children, text and
  * outerHTML, so node --test can drive them with plain objects. The pick session
- * takes `doc`/`win` for the same reason. drawOutline is the one canvas step.
+ * takes `doc`/`win` for the same reason, and shotAfterPick its capture and
+ * outline steps. drawOutline is the one canvas step.
  */
-import { excludedFromCapture } from './capture.js';
+import { excludedFromCapture, loadImage } from './capture.js';
 
 const MAX_CLASSES = 8;
 const MAX_TEXT = 200;
@@ -147,17 +148,45 @@ export function outlineRect(rect, { imageWidth, imageHeight, viewportWidth }) {
   return width > 0 && height > 0 ? { x, y, width, height } : null;
 }
 
+// How long decoding the shot, or canvas.toBlob, may take before drawOutline gives up.
+const OUTLINE_WAIT_MS = 1000;
+// How long the dialog stays hidden after a pick waiting for the outlined shot.
+export const PICK_SHOT_WAIT_MS = 1200;
+
+/** `promise`, or `fallback` once `ms` pass first. Never rejects: a rejection also gives `fallback`. */
+function within(promise, ms, fallback = null) {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(fallback), ms);
+    Promise.resolve(promise).then(
+      (v) => { clearTimeout(t); resolve(v); },
+      () => { clearTimeout(t); resolve(fallback); },
+    );
+  });
+}
+
 /**
  * A copy of a quick screenshot with the picked element outlined: 3 CSS px of
  * #6B63D9 with a 1px white halo, so it shows on light and dark pages.
- * Resolves { blob, width, height }.
+ * Resolves { blob, width, height }: the shot itself, un-outlined, when it
+ * cannot be decoded or drawn (no canvas context, toBlob gives nothing or never
+ * calls back) instead of throwing or staying pending.
  */
-export async function drawOutline(shot, rect, viewportWidth = window.innerWidth) {
-  const img = await createImageBitmap(shot.blob);
+export async function drawOutline(shot, rect, viewportWidth = window.innerWidth, { waitMs = OUTLINE_WAIT_MS } = {}) {
+  const original = { blob: shot.blob, width: shot.width, height: shot.height };
+  let img;
+  try {
+    img = await within(typeof createImageBitmap === 'function' ? createImageBitmap(shot.blob) : loadImage(shot.blob), waitMs);
+  } catch {
+    img = null;
+  }
+  const w = img?.naturalWidth || img?.width;
+  const h = img?.naturalHeight || img?.height;
+  if (!w || !h) return original;
   const canvas = document.createElement('canvas');
-  canvas.width = img.width;
-  canvas.height = img.height;
-  const ctx = canvas.getContext('2d');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext?.('2d');
+  if (!ctx) { img.close?.(); return original; }
   ctx.drawImage(img, 0, 0);
   img.close?.();
   const r = outlineRect(rect, { imageWidth: canvas.width, imageHeight: canvas.height, viewportWidth });
@@ -177,8 +206,44 @@ export async function drawOutline(shot, rect, viewportWidth = window.innerWidth)
     ctx.lineWidth = lw;
     ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
   }
-  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-  return { blob, width: canvas.width, height: canvas.height };
+  const blob = await within(new Promise((resolve) => canvas.toBlob(resolve, 'image/png')), waitMs);
+  return blob ? { blob, width: canvas.width, height: canvas.height } : original;
+}
+
+/**
+ * The step after a pick: retake the quick screenshot (`capture`) and outline
+ * the picked `rect` on it (`outline`). Resolves once the outlined shot is ready,
+ * `waitMs` pass or `signal` aborts, whichever is first, with
+ * { produced, shot, error, late }. `shot` is the outlined shot when it was ready
+ * in time. `late` resolves { shot, error } whenever the shot settles, with a
+ * null shot if `signal` aborted first, so the caller can still apply a shot that
+ * arrives after the limit. Never rejects: a capture or outline failure is
+ * reported as `error`.
+ */
+export function shotAfterPick({
+  capture, outline = drawOutline, rect, viewportWidth, signal, waitMs = PICK_SHOT_WAIT_MS,
+}) {
+  const late = (async () => {
+    const r = await capture();
+    if (!r?.blob) return null;
+    const outlined = await outline(r, rect, viewportWidth);
+    return outlined?.blob ? { ...r, ...outlined } : r;
+  })().then(
+    (shot) => ({ shot: signal?.aborted ? null : shot, error: null }),
+    (error) => ({ shot: null, error: signal?.aborted ? null : error }),
+  );
+  return new Promise((resolve) => {
+    const done = (res) => {
+      clearTimeout(t);
+      signal?.removeEventListener?.('abort', onAbort);
+      resolve({ produced: Boolean(res?.shot), shot: res?.shot || null, error: res?.error || null, late });
+    };
+    const onAbort = () => done(null);
+    const t = setTimeout(() => done(null), waitMs);
+    signal?.addEventListener?.('abort', onAbort);
+    if (signal?.aborted) done(null);
+    else late.then(done);
+  });
 }
 
 const overlaps = (a, b) => a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;

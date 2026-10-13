@@ -24,7 +24,7 @@ import VoicePanel from './VoicePanel';
 import MyReports from './MyReports';
 import { captureQuick, captureExact, supportsExactCapture, blobToFile } from './capture';
 import {
-  startElementPick, drawOutline, chipLabel, pickSummary, scrollLockKeys, suspendScrollLocks,
+  startElementPick, drawOutline, shotAfterPick, chipLabel, pickSummary, scrollLockKeys, suspendScrollLocks,
 } from './elementPicker';
 import { useMediaRecorder, formatMs, extensionFor } from './recorders';
 import { snapshotContext } from './contextBuffer';
@@ -184,7 +184,12 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
     if (screenRec.error) { setHidden(false); message.warning(screenRec.error); noteError('screen-recording', screenRec.error); }
   }, [screenRec.error]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Drops a pick's late screenshot, so it cannot replace one taken, annotated or
+  // removed since, or outline an element that is no longer picked.
+  const endPendingPick = () => pickAbort.current?.abort();
+
   const reset = useCallback(() => {
+    endPendingPick();
     setKind('bug'); setSeverity('annoying'); setSummary(''); setExpected(''); setSteps('');
     if (shot?.url) URL.revokeObjectURL(shot.url);
     setShot(null); setPicked(null); setVoice(null); setScreen(null); setFiles([]); setDone(null); setProgress('');
@@ -195,6 +200,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
   const handleClose = () => { setProblem(null); onClose(); };
 
   const retakeExact = async () => {
+    endPendingPick();
     setHidden(true);
     setCapturing(true);
     try {
@@ -210,6 +216,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
     }
   };
   const retakeQuick = async () => {
+    endPendingPick();
     setHidden(true);
     setCapturing(true);
     try {
@@ -228,14 +235,29 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
 
   // Pick one page element, then retake the quick screenshot with it outlined.
   // On cancel the screenshot and any earlier pick stay as they were.
-  // Closing or unmounting the dialog aborts it, which takes the pick layer and
-  // its listeners off the page and drops the late screenshot.
+  // The dialog comes back with the pick within PICK_SHOT_WAIT_MS even if the
+  // screenshot is still rendering; the outlined shot replaces the current one
+  // when it arrives. Closing or unmounting the dialog, picking again, or any
+  // other change to the screenshot (endPendingPick) aborts it, which takes the
+  // pick layer and its listeners off the page and drops the late screenshot.
   const pickElement = async () => {
     pickAbort.current?.abort();
     const ctrl = new AbortController();
     pickAbort.current = ctrl;
     const { signal } = ctrl;
     let restoreLocks = null;
+    let late = null;
+    const applyShot = (next) => {
+      const url = URL.createObjectURL(next.blob);
+      setShot((prev) => {
+        if (prev?.url) URL.revokeObjectURL(prev.url);
+        return { ...next, url };
+      });
+    };
+    const fail = (e) => {
+      message.warning(e.message || 'Screenshot failed.');
+      noteError('element-pick', e);
+    };
     setHidden(true);
     try {
       await new Promise((r) => setTimeout(r, 120));
@@ -248,23 +270,33 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
       const { description } = result;
       setPicked({ description });
       setCapturing(true);
-      const r = await captureQuick();
-      const outlined = await drawOutline(r, description.rect, window.innerWidth);
+      const res = await shotAfterPick({
+        capture: captureQuick, outline: drawOutline, rect: description.rect, viewportWidth: window.innerWidth, signal,
+      });
       if (signal.aborted) return;
-      if (shot?.url) URL.revokeObjectURL(shot.url);
-      setShot({ ...r, ...outlined, url: URL.createObjectURL(outlined.blob) });
+      if (res.error) throw res.error;
+      if (res.produced) applyShot(res.shot);
+      else late = res.late;
     } catch (e) {
       if (signal.aborted) return;
-      message.warning(e.message || 'Screenshot failed.');
-      noteError('element-pick', e);
+      fail(e);
     } finally {
-      // After the screenshot, so the page is captured with the rect it was picked at.
+      // With the dialog: after an in-time screenshot, so the page is captured
+      // with the rect it was picked at. A late one has had PICK_SHOT_WAIT_MS to
+      // take its copy of the page, and the open dialog should not scroll it.
       restoreLocks?.();
-      if (pickAbort.current === ctrl) pickAbort.current = null;
+      if (!late && pickAbort.current === ctrl) pickAbort.current = null;
       refocusPick.current = !signal.aborted;
       setCapturing(false);
       setHidden(false);
     }
+    if (!late) return;
+    const { shot: next, error } = await late;
+    const current = pickAbort.current === ctrl && !signal.aborted;
+    if (pickAbort.current === ctrl) pickAbort.current = null;
+    if (!current) return;
+    if (error) fail(error);
+    else if (next) applyShot(next);
   };
   useEffect(() => { if (!open) pickAbort.current?.abort(); }, [open]);
   useEffect(() => () => pickAbort.current?.abort(), []);
@@ -429,7 +461,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
     <Tooltip title={picked.description.selector}>
       <span className="kf-file kf-pick-chip">
         <span className="kf-pick-name">{chipLabel(picked.description)}</span>
-        <button type="button" onClick={() => setPicked(null)} aria-label="Remove picked element"><CloseOutlined /></button>
+        <button type="button" onClick={() => { endPendingPick(); setPicked(null); }} aria-label="Remove picked element"><CloseOutlined /></button>
       </span>
     </Tooltip>
   );
@@ -516,7 +548,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
                 {desktop && supportsExactCapture() && (
                   <Tooltip title="Retake with exact pixels (asks to share this tab)"><Button size="small" icon={<ReloadOutlined />} onClick={retakeExact}>Retake</Button></Tooltip>
                 )}
-                <Tooltip title="Remove"><Button size="small" danger icon={<DeleteOutlined />} onClick={() => { URL.revokeObjectURL(shot.url); setShot(null); }} /></Tooltip>
+                <Tooltip title="Remove"><Button size="small" danger icon={<DeleteOutlined />} onClick={() => { endPendingPick(); URL.revokeObjectURL(shot.url); setShot(null); }} /></Tooltip>
               </div>
             </div>
           ) : (
@@ -731,6 +763,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
             src={shot.url}
             onCancel={closeAnnotator}
             onDone={(blob) => {
+              endPendingPick();
               URL.revokeObjectURL(shot.url);
               setShot({ ...shot, blob, url: URL.createObjectURL(blob), annotated: true });
               closeAnnotator();

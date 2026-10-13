@@ -1513,15 +1513,45 @@ function outlineRect(rect, { imageWidth, imageHeight, viewportWidth }) {
   const height = clamp2((rect.y + rect.height) * k, imageHeight) - y;
   return width > 0 && height > 0 ? { x, y, width, height } : null;
 }
-async function drawOutline(shot, rect, viewportWidth = window.innerWidth) {
-  var _a;
-  const img = await createImageBitmap(shot.blob);
+var OUTLINE_WAIT_MS = 1e3;
+var PICK_SHOT_WAIT_MS = 1200;
+function within(promise, ms, fallback = null) {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(fallback), ms);
+    Promise.resolve(promise).then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      () => {
+        clearTimeout(t);
+        resolve(fallback);
+      }
+    );
+  });
+}
+async function drawOutline(shot, rect, viewportWidth = window.innerWidth, { waitMs = OUTLINE_WAIT_MS } = {}) {
+  var _a, _b, _c;
+  const original = { blob: shot.blob, width: shot.width, height: shot.height };
+  let img;
+  try {
+    img = await within(typeof createImageBitmap === "function" ? createImageBitmap(shot.blob) : loadImage(shot.blob), waitMs);
+  } catch {
+    img = null;
+  }
+  const w = (img == null ? void 0 : img.naturalWidth) || (img == null ? void 0 : img.width);
+  const h = (img == null ? void 0 : img.naturalHeight) || (img == null ? void 0 : img.height);
+  if (!w || !h) return original;
   const canvas = document.createElement("canvas");
-  canvas.width = img.width;
-  canvas.height = img.height;
-  const ctx = canvas.getContext("2d");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = (_a = canvas.getContext) == null ? void 0 : _a.call(canvas, "2d");
+  if (!ctx) {
+    (_b = img.close) == null ? void 0 : _b.call(img);
+    return original;
+  }
   ctx.drawImage(img, 0, 0);
-  (_a = img.close) == null ? void 0 : _a.call(img);
+  (_c = img.close) == null ? void 0 : _c.call(img);
   const r = outlineRect(rect, { imageWidth: canvas.width, imageHeight: canvas.height, viewportWidth });
   if (r) {
     const k = viewportWidth > 0 ? canvas.width / viewportWidth : 1;
@@ -1538,8 +1568,40 @@ async function drawOutline(shot, rect, viewportWidth = window.innerWidth) {
     ctx.lineWidth = lw;
     ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
   }
-  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-  return { blob, width: canvas.width, height: canvas.height };
+  const blob = await within(new Promise((resolve) => canvas.toBlob(resolve, "image/png")), waitMs);
+  return blob ? { blob, width: canvas.width, height: canvas.height } : original;
+}
+function shotAfterPick({
+  capture,
+  outline = drawOutline,
+  rect,
+  viewportWidth,
+  signal,
+  waitMs = PICK_SHOT_WAIT_MS
+}) {
+  const late = (async () => {
+    const r = await capture();
+    if (!(r == null ? void 0 : r.blob)) return null;
+    const outlined = await outline(r, rect, viewportWidth);
+    return (outlined == null ? void 0 : outlined.blob) ? { ...r, ...outlined } : r;
+  })().then(
+    (shot) => ({ shot: (signal == null ? void 0 : signal.aborted) ? null : shot, error: null }),
+    (error) => ({ shot: null, error: (signal == null ? void 0 : signal.aborted) ? null : error })
+  );
+  return new Promise((resolve) => {
+    var _a;
+    const done = (res) => {
+      var _a2;
+      clearTimeout(t);
+      (_a2 = signal == null ? void 0 : signal.removeEventListener) == null ? void 0 : _a2.call(signal, "abort", onAbort);
+      resolve({ produced: Boolean(res == null ? void 0 : res.shot), shot: (res == null ? void 0 : res.shot) || null, error: (res == null ? void 0 : res.error) || null, late });
+    };
+    const onAbort = () => done(null);
+    const t = setTimeout(() => done(null), waitMs);
+    (_a = signal == null ? void 0 : signal.addEventListener) == null ? void 0 : _a.call(signal, "abort", onAbort);
+    if (signal == null ? void 0 : signal.aborted) done(null);
+    else late.then(done);
+  });
 }
 var overlaps = (a, b) => a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 var isWithin = (node, ancestor) => {
@@ -1768,7 +1830,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.11.0";
+var WIDGET_VERSION = "1.12.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT2 = 280;
@@ -2008,7 +2070,12 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
       noteError("screen-recording", screenRec.error);
     }
   }, [screenRec.error]);
+  const endPendingPick = () => {
+    var _a2;
+    return (_a2 = pickAbort.current) == null ? void 0 : _a2.abort();
+  };
   const reset = (0, import_react6.useCallback)(() => {
+    endPendingPick();
     setKind("bug");
     setSeverity("annoying");
     setSummary("");
@@ -2032,6 +2099,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     onClose();
   };
   const retakeExact = async () => {
+    endPendingPick();
     setHidden(true);
     setCapturing(true);
     try {
@@ -2050,6 +2118,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     }
   };
   const retakeQuick = async () => {
+    endPendingPick();
     setHidden(true);
     setCapturing(true);
     try {
@@ -2072,9 +2141,21 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     pickAbort.current = ctrl;
     const { signal } = ctrl;
     let restoreLocks = null;
+    let late = null;
+    const applyShot = (next2) => {
+      const url = URL.createObjectURL(next2.blob);
+      setShot((prev) => {
+        if (prev == null ? void 0 : prev.url) URL.revokeObjectURL(prev.url);
+        return { ...next2, url };
+      });
+    };
+    const fail = (e) => {
+      import_antd4.message.warning(e.message || "Screenshot failed.");
+      noteError("element-pick", e);
+    };
     setHidden(true);
     try {
-      await new Promise((r2) => setTimeout(r2, 120));
+      await new Promise((r) => setTimeout(r, 120));
       if (signal.aborted) return;
       const before = locksBeforeOpen.current || [];
       restoreLocks = suspendScrollLocks(scrollLockKeys().filter((k) => !before.includes(k)));
@@ -2083,22 +2164,34 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
       const { description } = result;
       setPicked({ description });
       setCapturing(true);
-      const r = await captureQuick();
-      const outlined = await drawOutline(r, description.rect, window.innerWidth);
+      const res = await shotAfterPick({
+        capture: captureQuick,
+        outline: drawOutline,
+        rect: description.rect,
+        viewportWidth: window.innerWidth,
+        signal
+      });
       if (signal.aborted) return;
-      if (shot == null ? void 0 : shot.url) URL.revokeObjectURL(shot.url);
-      setShot({ ...r, ...outlined, url: URL.createObjectURL(outlined.blob) });
+      if (res.error) throw res.error;
+      if (res.produced) applyShot(res.shot);
+      else late = res.late;
     } catch (e) {
       if (signal.aborted) return;
-      import_antd4.message.warning(e.message || "Screenshot failed.");
-      noteError("element-pick", e);
+      fail(e);
     } finally {
       restoreLocks == null ? void 0 : restoreLocks();
-      if (pickAbort.current === ctrl) pickAbort.current = null;
+      if (!late && pickAbort.current === ctrl) pickAbort.current = null;
       refocusPick.current = !signal.aborted;
       setCapturing(false);
       setHidden(false);
     }
+    if (!late) return;
+    const { shot: next, error } = await late;
+    const current = pickAbort.current === ctrl && !signal.aborted;
+    if (pickAbort.current === ctrl) pickAbort.current = null;
+    if (!current) return;
+    if (error) fail(error);
+    else if (next) applyShot(next);
   };
   (0, import_react6.useEffect)(() => {
     var _a2;
@@ -2264,7 +2357,10 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
   const pickButton = /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Button, { ref: pickRef, size: "small", icon: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_icons3.AimOutlined, {}), onClick: pickElement, disabled: offer.disabled, children: offer.label });
   const pickedChip = offer.chip && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Tooltip, { title: picked.description.selector, children: /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("span", { className: "kf-file kf-pick-chip", children: [
     /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { className: "kf-pick-name", children: chipLabel(picked.description) }),
-    /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("button", { type: "button", onClick: () => setPicked(null), "aria-label": "Remove picked element", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_icons3.CloseOutlined, {}) })
+    /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("button", { type: "button", onClick: () => {
+      endPendingPick();
+      setPicked(null);
+    }, "aria-label": "Remove picked element", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_icons3.CloseOutlined, {}) })
   ] }) });
   const form = done ? /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { className: "kf-success", children: [
     /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_icons3.CheckCircleFilled, { style: { fontSize: 40, color: "#22c55e" } }),
@@ -2339,6 +2435,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
             /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Tooltip, { title: "Draw on it", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Button, { size: "small", icon: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_icons3.EditOutlined, {}), onClick: () => setAnnotateTarget({ kind: "shot" }), children: "Annotate" }) }),
             desktop && supportsExactCapture() && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Tooltip, { title: "Retake with exact pixels (asks to share this tab)", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Button, { size: "small", icon: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_icons3.ReloadOutlined, {}), onClick: retakeExact, children: "Retake" }) }),
             /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Tooltip, { title: "Remove", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_antd4.Button, { size: "small", danger: true, icon: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_icons3.DeleteOutlined, {}), onClick: () => {
+              endPendingPick();
               URL.revokeObjectURL(shot.url);
               setShot(null);
             } }) })
@@ -2556,6 +2653,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
             src: shot.url,
             onCancel: closeAnnotator,
             onDone: (blob) => {
+              endPendingPick();
               URL.revokeObjectURL(shot.url);
               setShot({ ...shot, blob, url: URL.createObjectURL(blob), annotated: true });
               closeAnnotator();
