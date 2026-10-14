@@ -31,7 +31,7 @@ export function buildDescription(payload, screenshotUrl, attachments, app) {
     payload.summary,
     payload.expected ? `\nExpected: ${payload.expected}` : '',
     payload.steps ? `\nSteps to reproduce:\n${payload.steps}` : '',
-    payload.transcript ? `\nVoice note transcript: ${payload.transcript}` : '',
+    // Voice-note text is already in summary.
   ].filter(Boolean).join('\n');
 
   const rich = {

@@ -15,8 +15,8 @@ The widget hands every transport the same object, `transport.submitFeedback(payl
 | `summary` | `string` | required, trimmed, at most 20 000 chars (textarea `maxLength`); starts with `"Report tool: "` when `kind === 'report-tool'` |
 | `expected` | `string \| null` | "What did you expect" / "Why would this help" |
 | `steps` | `string \| null` | bugs only |
-| `transcript` | `string \| null` | voice note text, edited by the reporter |
-| `transcriptSource` | `string \| null` | `'browser'` (Web Speech captions) or the server provider name; null when there is no transcript |
+| `transcript` | `string \| null` | always `null` from the widget: a voice note's text is written into "What happened?" and travels in `summary`. The key stays for older servers and adapters |
+| `transcriptSource` | `string \| null` | where the voice text in `summary` came from: `'browser'` (Web Speech captions) or the server provider name; null when no voice text went into `summary` |
 | `pageUrl` | `string` | `window.location.href` at submit |
 | `route` | `string` | `window.location.pathname` at submit |
 | `context` | object | below |
@@ -69,7 +69,7 @@ The payload is otherwise a normal v1 payload: `severity`, `expected`, `steps`, `
 | `state` | `string` | `editing`, `submitting`, `submit-failed`, `sent`, `sent-with-warnings`, `capturing-screenshot`, `recording-screen` or `my-reports` |
 | `progress` | `string \| null` | the progress line at that moment, e.g. `Uploading screenshot.png (1/3)…` |
 | `lastError` | `{ stage, message, stack } \| null` | the widget's last error; `stage` is `submit`, `upload`, `finalize`, `screenshot`, `auto-screenshot`, `exact-screenshot`, `element-pick` (1.2) or `screen-recording`; `stack` at most 2 000 chars |
-| `form` | object | what the reporter had filled in: `kind`, `severity`, `summary`, `expected`, `steps`, `transcript` (each free-text field clipped to 280 chars plus `… (+N chars)`), `screenshot: { method, annotated } \| null`, `voiceNote` and `screenRecording: { durationMs, mimeType } \| null`, `files: { name, type, size }[]`, `element` (the picked element's selector) `\| null` (1.2). No file contents. |
+| `form` | object | what the reporter had filled in: `kind`, `severity`, `summary`, `expected`, `steps`, `transcript` (always `null`, the voice text is in `summary`; each free-text field clipped to 280 chars plus `… (+N chars)`), `screenshot: { method, annotated } \| null`, `voiceNote` and `screenRecording: { durationMs, mimeType } \| null`, `files: { name, type, size }[]`, `element` (the picked element's selector) `\| null` (1.2). No file contents. |
 | `failedAttachments` | `{ name, error }[]` | uploads that failed on the last send |
 | `browser`, `viewport` | | same shapes as `context.browser` / `context.viewport` |
 | `capturedAt` | ISO string | |
