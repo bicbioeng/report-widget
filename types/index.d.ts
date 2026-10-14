@@ -14,7 +14,9 @@ export interface ReportPayload {
   summary: string;
   expected: string | null;
   steps: string | null;
+  /** Always null from the widget: voice-note text is written into `summary`. Kept for older servers and adapters. */
   transcript: string | null;
+  /** 'browser' or the server provider name when voice-note text went into `summary`, else null. */
   transcriptSource: string | null;
   pageUrl: string;
   route: string;
@@ -50,6 +52,7 @@ export interface ReportToolDiagnostics {
     summary: string | null;
     expected: string | null;
     steps: string | null;
+    /** Always null: the voice-note text is in `summary`. */
     transcript: string | null;
     screenshot: { method: string | null; annotated: boolean } | null;
     voiceNote: { durationMs: number | null; mimeType: string | null } | null;

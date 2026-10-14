@@ -34,7 +34,7 @@ export function errorRecord(stage, e) {
 /**
  * input: {
  *   state, progress?, lastError?, failedAttachments?, browser?, viewport?,
- *   form?: { kind, severity, summary, expected, steps, transcript, shot, voice, screen, files, element }
+ *   form?: { kind, severity, summary, expected, steps, shot, voice, screen, files, element }
  * }
  */
 export function buildDiagnostics({
@@ -52,7 +52,7 @@ export function buildDiagnostics({
       summary: clipText(f.summary),
       expected: clipText(f.expected),
       steps: clipText(f.steps),
-      transcript: clipText(f.transcript),
+      transcript: null, // voice text is in summary; the key stays
       screenshot: f.shot ? { method: f.shot.method || null, annotated: Boolean(f.shot.annotated) } : null,
       voiceNote: f.voice ? { durationMs: f.voice.durationMs ?? null, mimeType: f.voice.mimeType || null } : null,
       screenRecording: f.screen ? { durationMs: f.screen.durationMs ?? null, mimeType: f.screen.mimeType || null } : null,

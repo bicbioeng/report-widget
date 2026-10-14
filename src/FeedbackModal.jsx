@@ -31,7 +31,7 @@ import { snapshotContext } from './contextBuffer';
 import { pageMetadata, isDesktop } from './metadata';
 import { useReportConfig } from './ReportProvider';
 import { buildDiagnostics, buildReportToolPayload, errorRecord } from './diagnostics';
-import { pickOffer, feedbackPayload } from './reportForm';
+import { pickOffer, feedbackPayload, createVoiceRun, SUMMARY_MAX_LENGTH } from './reportForm';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -110,6 +110,28 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
   if (!open) locksBeforeOpen.current = null;
   else if (!locksBeforeOpen.current) locksBeforeOpen.current = scrollLockKeys();
   const noteError = (stage, e) => setLastError(errorRecord(stage, e));
+  // Voice text goes into "What happened?"; see mergeTranscript for the rules.
+  const summaryRef = useRef(summary);
+  summaryRef.current = summary;
+  // Owned here, not in VoicePanel, so the ids stay unique and a running
+  // transcription survives the panel unmounting (My reports, problem view).
+  const voiceRun = useRef(null);
+  if (!voiceRun.current) voiceRun.current = createVoiceRun();
+  const [voiceStatus, setVoiceStatus] = useState({ transcribing: null, note: null });
+  const voiceSession = {
+    next: voiceRun.current.next,
+    isCurrent: voiceRun.current.isCurrent,
+    addTranscript: (id, text) => {
+      const r = voiceRun.current.add(summaryRef.current, id, text);
+      if (r.truncated) message.warning(`The voice note was cut to fit the ${SUMMARY_MAX_LENGTH.toLocaleString('en-US')}-character limit of "What happened?".`);
+      if (!r.added) return false;
+      summaryRef.current = r.summary;
+      setSummary(r.summary);
+      return true;
+    },
+    status: voiceStatus,
+    setStatus: setVoiceStatus,
+  };
 
   const screenRec = useMediaRecorder({ kind: 'screen', maxMs: 2 * 60 * 1000 });
 
@@ -194,10 +216,19 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
     if (shot?.url) URL.revokeObjectURL(shot.url);
     setShot(null); setPicked(null); setVoice(null); setScreen(null); setFiles([]); setDone(null); setProgress('');
     setLastError(null); setFailedUploads([]); setProblem(null);
+    voiceRun.current.clear(); setVoiceStatus({ transcribing: null, note: null });
     autoShotDone.current = false;
   }, [shot]);
 
   const handleClose = () => { setProblem(null); onClose(); };
+  // Closing starts the next open clean. A pending transcription is dropped at
+  // once (it must not write into the hidden form); the rest is cleared in
+  // afterClose, so the form does not empty while it fades out.
+  useEffect(() => {
+    if (open) return;
+    voiceRun.current.clear();
+    setVoiceStatus({ transcribing: null, note: null });
+  }, [open]);
 
   const retakeExact = async () => {
     endPendingPick();
@@ -399,7 +430,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
         failedAttachments: failedUploads,
         browser,
         viewport,
-        form: { kind, severity, summary, expected, steps, transcript: voice?.transcript, shot, voice, screen, files, element: picked?.description },
+        form: { kind, severity, summary, expected, steps, shot, voice, screen, files, element: picked?.description },
       }),
     });
   };
@@ -497,14 +528,14 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
         <TextArea
           autoFocus
           value={summary}
-          onChange={(e) => setSummary(e.target.value)}
+          onChange={(e) => { voiceRun.current.edit(e.target.value); setSummary(e.target.value); }}
           placeholder={typeof PROMPTS[kind] === 'function' ? PROMPTS[kind](appName) : PROMPTS[kind]}
           autoSize={{ minRows: 3, maxRows: 8 }}
-          maxLength={20000}
+          maxLength={SUMMARY_MAX_LENGTH}
         />
       </div>
 
-      <VoicePanel value={voice} onChange={setVoice} transcriptionAvailable={transcriptionAvailable} />
+      <VoicePanel open={open} value={voice} onChange={setVoice} session={voiceSession} transcriptionAvailable={transcriptionAvailable} />
 
       {kind === 'bug' && (
         <div>
@@ -691,6 +722,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
       <Modal
         open={open}
         onCancel={handleClose}
+        afterClose={reset}
         footer={null}
         width={720}
         centered
