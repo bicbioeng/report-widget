@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+Additive; the six required transport functions are unchanged.
+
+- **My reports filters.** Status, Assignee (with 'Unassigned') and, when there is more than one kind, Kind filter the fetched list on the client. 'No reports match' with 'Clear filters' when nothing passes.
+- **Assignee on every row**: the report's `assignee`, else `ticket.assignee`, else 'Unassigned'.
+- **Optional staff editing.** With `config.myReports = { canEdit, members }` (or `canEdit` / `members` props on `MyReports`), rows show Status and Assignee dropdowns that call the new optional transport methods `updateFeedbackState(id, state)` and `updateTicketAssignee(ticketKey, assigneeId | null)`. Edits are optimistic and revert when the call rejects.
+- The KIDS adapter implements both (`PATCH /feedback/:id/state`, `PATCH /agile/tickets/:key`); they toast the server error and reject.
+- `STATE_LABELS` and `KIND_LABELS` now live in `src/reportFilters.js`; the package exports are unchanged.
+
 ## 1.7.1
 
 - `STATE_LABELS` / `STATE_COLORS` include `testing` ("Testing", cyan). KIDS reports cards in the Testing column as their own state instead of "In progress".

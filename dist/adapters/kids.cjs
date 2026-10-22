@@ -78,6 +78,14 @@ function createKidsTransport({ baseUrl, getAuthHeaders, onError } = {}) {
     fetchMyFeedback() {
       return request("/feedback/mine", { silent: true });
     },
+    /** Staff: move a report to another triage state. Toasts and rejects on failure. */
+    updateFeedbackState(id, state) {
+      return request(`/feedback/${id}/state`, { method: "PATCH", body: { state } });
+    },
+    /** Staff: (un)assign the report's ticket; assigneeId null unassigns. Toasts and rejects on failure. */
+    updateTicketAssignee(ticketKey, assigneeId) {
+      return request(`/agile/tickets/${encodeURIComponent(ticketKey)}`, { method: "PATCH", body: { assigneeId: assigneeId != null ? assigneeId : null } });
+    },
     /** Audio → text. Resolves { text, provider } or { unavailable: true }. */
     async transcribeAudio(blob, { filename = "voice.webm", language = "en" } = {}) {
       const headers = await headersFor({ freshToken: true });

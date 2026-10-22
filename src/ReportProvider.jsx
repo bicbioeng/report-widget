@@ -7,6 +7,9 @@
  *   buildSha?,          // default 'dev'
  *   appName?,           // default 'KIDS' (v1 copy is unchanged)
  *   getImpersonation?,  // () => ({ email } | null)
+ *   myReports?,         // { canEdit?, members?: [{ id, name, email? }] } — staff Status/Assignee
+ *                       // dropdowns in My reports; needs transport.updateFeedbackState /
+ *                       // updateTicketAssignee. MyReports canEdit/members props override it.
  * }
  */
 import React, { createContext, useContext, useEffect } from 'react';

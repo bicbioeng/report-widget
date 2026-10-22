@@ -1,12 +1,13 @@
-import React, { useEffect, useState } from 'react';
-import { Empty, Skeleton, Typography, Button } from 'antd';
+import React, { useEffect, useRef, useState } from 'react';
+import { Empty, Skeleton, Typography, Button, Select } from 'antd';
 import { useReportConfig } from './ReportProvider';
+import { STATE_LABELS, KIND_LABELS, assigneeOf, assigneeLabel, assigneeMemberId, filterOptions, filterReports, editCapability, createReportStore } from './reportFilters';
+
+export { STATE_LABELS, KIND_LABELS };
 
 const { Text } = Typography;
 
 export const STATE_COLORS = { new: 'blue', acknowledged: 'geekblue', in_progress: 'gold', testing: 'cyan', done: 'green', dismissed: 'default' };
-export const STATE_LABELS = { new: 'New', acknowledged: 'Acknowledged', in_progress: 'In progress', testing: 'Testing', done: 'Done', dismissed: 'Dismissed' };
-export const KIND_LABELS = { bug: 'Bug', idea: 'Idea', question: 'Question', 'report-tool': 'Report tool' };
 
 const FILL = { in_progress: 0.5, testing: 0.75 };
 const C = 2 * Math.PI * 3;
@@ -38,29 +39,108 @@ export function relTime(iso) {
   return d.toLocaleDateString();
 }
 
-export default function MyReports({ onOpenTicket, refreshKey }) {
-  const { transport } = useReportConfig();
-  const [items, setItems] = useState(null);
-  useEffect(() => {
-    let alive = true;
-    transport.fetchMyFeedback().then((r) => { if (alive) setItems(r.items || []); }).catch(() => { if (alive) setItems([]); });
-    return () => { alive = false; };
-  }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+const STATUS_OPTIONS = Object.keys(STATE_LABELS).map((st) => ({ value: st, label: <StatusLabel state={st} /> }));
+const UNASSIGN = '__unassigned';
+const NO_FILTERS = { status: undefined, assignee: undefined, kind: undefined };
 
+// Popups stay in antd's body portal (no getPopupContainer): the row's hover transform would clip them.
+const small = { size: 'small', popupMatchSelectWidth: false };
+
+export default function MyReports({ onOpenTicket, refreshKey, canEdit, members }) {
+  const { transport, myReports } = useReportConfig();
+  const [, rerender] = useState(0);
+  const store = useRef(null);
+  if (!store.current) store.current = createReportStore(() => rerender((n) => n + 1));
+  const [filters, setFilters] = useState(NO_FILTERS);
+  const statusFilter = useRef(null);
+  useEffect(() => { store.current.load(() => transport.fetchMyFeedback()); }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const items = store.current.items;
   if (items === null) return <Skeleton active paragraph={{ rows: 3 }} />;
   if (!items.length) return <Empty description="You have not reported anything yet." image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+
+  const team = members ?? myReports?.members;
+  const can = editCapability({ canEdit: canEdit ?? myReports?.canEdit, members: team, transport });
+  const options = filterOptions(items, filters);
+  const rows = filterReports(items, filters);
+  const setFilter = (key) => (value) => setFilters((f) => ({ ...f, [key]: value }));
+  const clearFilters = () => { setFilters(NO_FILTERS); statusFilter.current?.focus(); };
+
+  // Optimistic: the store shows the change at once and reverts if the transport rejects
+  // (it surfaces its own error).
+  const busy = (r, field) => store.current.isBusy(r.id, field);
+  const setStatus = (r, state) => store.current.edit(r, 'status', state, () => transport.updateFeedbackState(r.id, state));
+  const setAssignee = (r, value) => {
+    const m = value === UNASSIGN ? null : team.find((x) => x.id === value);
+    const next = m ? { id: m.id, name: m.name } : null;
+    store.current.edit(r, 'assignee', { assignee: next, ticket: next }, () => transport.updateTicketAssignee(r.ticketKey, m ? m.id : null));
+  };
+  const assigneeValue = (r) => {
+    const a = assigneeOf(r);
+    const id = assigneeMemberId(a, team);
+    if (id === null) return UNASSIGN;
+    return id !== undefined ? id : `name:${a.name}`;
+  };
+  const assigneeOptions = (r) => {
+    const v = assigneeValue(r);
+    const list = [{ value: UNASSIGN, label: 'Unassigned' }, ...team.map((m) => ({ value: m.id, label: m.name }))];
+    // Someone outside the member list keeps their name in the control.
+    return typeof v === 'string' && v.startsWith('name:') ? [...list, { value: v, label: v.slice(5), disabled: true }] : list;
+  };
+
   return (
     <div>
-      {items.map((r) => (
-        <div className="kf-report" key={r.id}>
-          <StatusIcon state={r.triageState} />
-          <div style={{ minWidth: 0 }}>
-            <div className="t" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.ticket?.title || r.summary}</div>
-            <div className="s"><span className={`kf-st-label kf-st--${r.triageState}`}>{STATE_LABELS[r.triageState] || r.triageState}</span> · {KIND_LABELS[r.kind] || r.kind} · {relTime(r.createdAt)}{r.route ? ` · ${r.route}` : ''}</div>
+      <div className="kf-reports-filters">
+        <Select {...small} ref={statusFilter} allowClear placeholder="All statuses" aria-label="Filter by status"
+          value={filters.status} onChange={setFilter('status')}
+          options={options.status.map((o) => ({ value: o.value, label: <StatusLabel state={o.value} /> }))} />
+        <Select {...small} allowClear placeholder="All assignees" aria-label="Filter by assignee"
+          value={filters.assignee} onChange={setFilter('assignee')} options={options.assignee} />
+        {(options.kind.length > 1 || filters.kind) && (
+          <Select {...small} allowClear placeholder="All kinds" aria-label="Filter by kind"
+            value={filters.kind} onChange={setFilter('kind')} options={options.kind} />
+        )}
+      </div>
+      {!rows.length && (
+        <Empty description="No reports match" image={Empty.PRESENTED_IMAGE_SIMPLE}>
+          <Button type="link" onClick={clearFilters}>Clear filters</Button>
+        </Empty>
+      )}
+      {rows.map((r) => {
+        const editAssignee = can.assignee && !!r.ticketKey;
+        const editing = can.status || editAssignee;
+        return (
+          <div className={`kf-report${editing ? ' kf-report--edit' : ''}`} key={r.id}>
+            <StatusIcon state={r.triageState} />
+            <div style={{ minWidth: 0 }}>
+              <div className="t" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.ticket?.title || r.summary}</div>
+              <div className="s">
+                <span className="kf-report-meta"><span className={`kf-st-label kf-st--${r.triageState}`}>{STATE_LABELS[r.triageState] || r.triageState}</span> · {KIND_LABELS[r.kind] || r.kind} · {relTime(r.createdAt)}{r.route ? ` · ${r.route}` : ''}</span>
+                <span className="kf-report-who">{` · ${assigneeLabel(r)}`}</span>
+              </div>
+            </div>
+            {(editing || r.ticketKey) && (
+              <div className="kf-report-end">
+                {editing && (
+                  <div className="kf-report-edit">
+                    {can.status && (
+                      <Select {...small} className="kf-report-status" aria-label="Status" value={r.triageState}
+                        options={STATUS_OPTIONS} onChange={(v) => setStatus(r, v)}
+                        disabled={busy(r, 'status')} loading={busy(r, 'status')} />
+                    )}
+                    {editAssignee && (
+                      <Select {...small} className="kf-report-assignee" aria-label="Assignee" value={assigneeValue(r)}
+                        options={assigneeOptions(r)} onChange={(v) => setAssignee(r, v)} showSearch optionFilterProp="label"
+                        disabled={busy(r, 'assignee')} loading={busy(r, 'assignee')} />
+                    )}
+                  </div>
+                )}
+                {r.ticketKey && <Button size="small" type="link" onClick={() => onOpenTicket?.(r.ticketKey)}>{r.ticketKey}</Button>}
+              </div>
+            )}
           </div>
-          {r.ticketKey && <Button size="small" type="link" onClick={() => onOpenTicket?.(r.ticketKey)}>{r.ticketKey}</Button>}
-        </div>
-      ))}
+        );
+      })}
       <Text type="secondary" style={{ fontSize: 12 }}>You are notified when a report changes state or gets a reply.</Text>
     </div>
   );

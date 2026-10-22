@@ -289,6 +289,24 @@
 .kf-report .t { font-size: 13.5px; color: var(--kf-ink); font-weight: 500; }
 .kf-report .s { font-size: 12px; color: var(--kf-muted); }
 .kf-report .ant-btn-link { font: 600 12px var(--kf-font); letter-spacing: .02em; color: var(--kf-accent); padding: 0 4px; }
+/* The route etc. truncates first; the assignee keeps its place at the end of the line. */
+.kf-report .s { display: flex; min-width: 0; white-space: nowrap; }
+.kf-report-meta { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.kf-report-who { flex: 0 0 auto; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.kf-report-end, .kf-report-edit { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.kf-report-status { width: 136px; }
+.kf-report-assignee { width: 160px; }
+.kf-reports-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.kf-reports-filters > .ant-select { width: 160px; }
+@media (max-width: 480px) {
+  .kf-reports-filters > .ant-select { width: 100%; }
+  /* Key link stays on the title's line; the dropdowns get a full-width line of their own. */
+  .kf-report--edit { grid-template-columns: 18px minmax(0, 1fr) auto; row-gap: 10px; }
+  .kf-report--edit .kf-report-end { display: contents; }
+  .kf-report--edit .kf-report-end > .ant-btn-link { grid-row: 1; grid-column: 3; }
+  .kf-report--edit .kf-report-edit { grid-row: 2; grid-column: 1 / -1; }
+  .kf-report--edit .kf-report-edit > .ant-select { flex: 1 1 0; width: auto; min-width: 0; }
+}
 /* Status: a fixed-width glyph whose shape fills as the report moves (Linear-style), plus the
    word in the meta line, so state never rests on color alone and titles always line up. */
 .kf-st { display: block; flex: none; color: var(--kf-faint, #8A8DA6); }

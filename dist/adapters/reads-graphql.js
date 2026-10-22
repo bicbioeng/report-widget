@@ -13,9 +13,8 @@ function buildDescription(payload, screenshotUrl, attachments, app) {
 Expected: ${payload.expected}` : "",
     payload.steps ? `
 Steps to reproduce:
-${payload.steps}` : "",
-    payload.transcript ? `
-Voice note transcript: ${payload.transcript}` : ""
+${payload.steps}` : ""
+    // Voice-note text is already in summary.
   ].filter(Boolean).join("\n");
   const rich = {
     ...app ? { app } : {},

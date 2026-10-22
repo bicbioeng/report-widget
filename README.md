@@ -55,7 +55,15 @@ const transport = createKidsTransport({ baseUrl: import.meta.env.VITE_REST_API_U
   - Signature: `createReadsGraphqlTransport({ app: 'gedb' | 'bnfr', client, gql, getEmail?, folder?, projectName? })`, or pass `url` and `getHeaders` in place of `client` and `gql` for plain fetch.
   - Built for backends that only have the single-shot `submitFeedback` mutation plus `getUploadUrl`.
   - The title gets an app prefix, e.g. `[GEDB] …`. Nothing is sent until `finalizeFeedback`. `ticketKey` is `null`.
-- **Your own transport.** Implement the six functions in PAYLOAD.md.
+- **Your own transport.** Implement the six functions in PAYLOAD.md. `updateFeedbackState` and `updateTicketAssignee` are optional (see My reports below).
+
+### My reports: filters and staff editing
+
+- **Filters.** Above the list sit Status, Assignee (always with 'Unassigned') and, when the reports hold more than one kind, Kind. They run on the client over what `fetchMyFeedback` returned and combine with AND. When nothing passes, the tab shows 'No reports match' with a 'Clear filters' link.
+- **Assignee.** Each row ends its grey line with the report's `assignee`, else `ticket.assignee`, else 'Unassigned'. Either may be `{ id, name }`, `{ displayName }`, `{ email }` or a plain string. A backend that does not send one shows every row as 'Unassigned'.
+- **Staff editing.** Pass `config.myReports = { canEdit: true, members: [{ id, name }] }` on `ReportProvider`, or `canEdit` / `members` props on `MyReports`. Rows then get a Status dropdown (needs `transport.updateFeedbackState(id, state)`) and, on rows with a ticket, an Assignee dropdown (needs `members` and `transport.updateTicketAssignee(ticketKey, assigneeId | null)`; `null` unassigns). Without `canEdit` or the method, the control is simply absent.
+- **Edits are optimistic.** The row changes at once; if the transport rejects, it goes back. The widget shows no toast of its own, so the transport must surface the error (the KIDS adapter toasts the server's error text, deduplicated). A transport that rejects silently leaves only the revert.
+- The KIDS adapter implements both: `PATCH /feedback/:id/state` with `{ state }` and `PATCH /agile/tickets/:key` with `{ assigneeId }`.
 
 ## Develop
 
