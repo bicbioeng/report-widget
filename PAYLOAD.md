@@ -100,6 +100,16 @@ fetchMyFeedback(): Promise<{ items: MyReport[] }>
 
 When `ticketKey` is `null`, the widget hides the "Open ticket" UI.
 
+```ts
+type MyReport = {
+  id, kind, summary, triageState, createdAt, route?,
+  ticketKey?: string | null,
+  ticket?: { title?, assignee?, project? } | null,
+  assignee?: { id?, name } | string | null,
+  project?: string | { key?, prefix?, name? } | null,   // optional; else ticket.project, else the ticketKey prefix
+}
+```
+
 ## How each adapter stores it
 
 - **`adapters/kids`**: sends `POST /feedback` with the payload unchanged. The KIDS server trims text fields, keeps `errors` to 40 and `routeHistory` to 20 when `context` is too large, then creates the ticket. It returns `ticketKey`.

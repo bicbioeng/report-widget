@@ -1,8 +1,8 @@
-// My reports: filters, assignee display and staff edit gating (BICBIOENG-119). Runs against src, no DOM.
+// My reports: filters, assignee display and staff edit gating (BICBIOENG-119, project filter BICBIOENG-142). Runs against src, no DOM.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  assigneeOf, assigneeLabel, assigneeMemberId, filterOptions, filterReports, editCapability, createReportStore, STATE_LABELS, KIND_LABELS,
+  assigneeOf, assigneeLabel, assigneeMemberId, filterOptions, filterReports, editCapability, createReportStore, projectOf, NO_PROJECT, STATE_LABELS, KIND_LABELS,
 } from '../src/reportFilters.js';
 import { createKidsTransport } from '../src/adapters/kids.js';
 
@@ -289,4 +289,115 @@ test('a later edit rejected before a stale refetch lands keeps the earlier succe
   // A fetch started after both edits is the truth again.
   await store.load(() => Promise.resolve({ items: fresh() }));
   assert.equal(row(store, 3).triageState, 'new');
+});
+
+// Project filter (BICBIOENG-142).
+const projectItems = [
+  { id: 1, kind: 'bug', triageState: 'new', ticketKey: 'GERMANIUM-150', project: 'GERMANIUM' },
+  { id: 2, kind: 'bug', triageState: 'done', ticketKey: 'BNFR-12' }, // project only from the ticket key
+  { id: 3, kind: 'idea', triageState: 'new', ticketKey: null, ticket: null }, // no project at all
+  { id: 4, kind: 'bug', triageState: 'done', ticketKey: 'KIDS-9', project: { key: 'GERMANIUM', name: 'Germanium' } },
+];
+
+test('projectOf reads report.project, then ticket.project, then the ticket key prefix', () => {
+  assert.equal(projectOf({ project: 'GEDB', ticketKey: 'KIDS-1' }), 'GEDB');
+  assert.equal(projectOf({ project: { key: 'GEDB', name: 'GeDB' } }), 'GEDB');
+  assert.equal(projectOf({ project: { prefix: 'BNFR' } }), 'BNFR');
+  assert.equal(projectOf({ project: { name: 'Germanium' } }), 'Germanium');
+  assert.equal(projectOf({ ticket: { project: 'KIDS' }, ticketKey: 'X-1' }), 'KIDS');
+  assert.equal(projectOf({ ticketKey: 'GERMANIUM-170' }), 'GERMANIUM');
+  assert.equal(projectOf({ ticketKey: 'MY-APP-3' }), 'MY-APP');
+  assert.equal(projectOf({ ticketKey: null }), null);
+  assert.equal(projectOf({ ticketKey: 'nodash' }), null);
+  assert.equal(projectOf({ project: {} }), null);
+  assert.equal(projectOf(null), null);
+});
+
+test("project filter options list each project once and 'No project' when a report has none", () => {
+  assert.deepEqual(filterOptions(projectItems).project, [
+    { value: 'BNFR', label: 'BNFR' }, { value: 'GERMANIUM', label: 'GERMANIUM' }, { value: NO_PROJECT, label: 'No project' },
+  ]);
+  assert.deepEqual(filterOptions([projectItems[0]]).project, [{ value: 'GERMANIUM', label: 'GERMANIUM' }]);
+  // A selected project no report holds any more stays listed.
+  assert.deepEqual(filterOptions([projectItems[0]], { project: 'BNFR' }).project.map((o) => o.value), ['BNFR', 'GERMANIUM']);
+  assert.deepEqual(filterOptions([projectItems[0]], { project: NO_PROJECT }).project.map((o) => o.value), ['GERMANIUM', NO_PROJECT]);
+});
+
+test('filtering by project, alone and with a status filter', () => {
+  assert.deepEqual(ids(filterReports(projectItems, { project: 'GERMANIUM' })), [1, 4]);
+  assert.deepEqual(ids(filterReports(projectItems, { project: 'BNFR' })), [2]);
+  assert.deepEqual(ids(filterReports(projectItems, { project: NO_PROJECT })), [3]);
+  assert.deepEqual(ids(filterReports(projectItems, { project: 'GERMANIUM', status: 'done' })), [4]);
+  assert.deepEqual(ids(filterReports(projectItems, { project: 'BNFR', status: 'new' })), []);
+});
+
+// The reporter's scenario end to end, over a fake transport (no network).
+const scenarioReports = () => [
+  { id: 1, kind: 'bug', triageState: 'in_progress', summary: 'Details page crashes on empty gene', ticketKey: 'GERMANIUM-170', assignee: { id: 'u1', name: 'Etienne Gnimpieba Zohim' } },
+  { id: 2, kind: 'bug', triageState: 'in_progress', summary: 'Upload stalls at 99%', ticketKey: 'BNFR-21', assignee: { id: 'u2', name: 'Ana Diaz' } },
+  { id: 3, kind: 'idea', triageState: 'new', summary: 'Gamma: export as CSV', ticketKey: 'GERMANIUM-150', ticket: { assignee: null } },
+  { id: 4, kind: 'bug', triageState: 'done', summary: 'Logo blurry', ticketKey: 'KIDS-4', assignee: { id: 'u1', name: 'Etienne Gnimpieba Zohim' } },
+];
+const scenarioMembers = [{ id: 'u1', name: 'Etienne Gnimpieba Zohim' }, { id: 'u2', name: 'Ana Diaz' }, { id: 'u3', name: 'Pat Lee' }];
+
+function fakeTransport({ reject = false } = {}) {
+  const calls = [];
+  return {
+    calls,
+    fetchMyFeedback: async () => ({ items: scenarioReports() }),
+    updateFeedbackState: async (id, state) => { calls.push(['state', id, state]); if (reject) throw new Error('Not allowed'); },
+    updateTicketAssignee: async (key, assigneeId) => { calls.push(['assignee', key, assigneeId]); if (reject) throw new Error('Not allowed'); },
+  };
+}
+
+// Same calls MyReports.jsx makes from the row controls.
+const setStatus = (store, transport, r, state) => store.edit(r, 'status', state, () => transport.updateFeedbackState(r.id, state));
+function setAssignee(store, transport, r, memberId) {
+  const m = scenarioMembers.find((x) => x.id === memberId);
+  const next = m ? { id: m.id, name: m.name } : null;
+  return store.edit(r, 'assignee', { assignee: next, ticket: next }, () => transport.updateTicketAssignee(r.ticketKey, m ? m.id : null));
+}
+
+test('My reports: filtering by status then assignee leaves only the matching report', async () => {
+  const transport = fakeTransport();
+  const store = createReportStore();
+  await store.load(() => transport.fetchMyFeedback());
+  assert.equal(store.items.length, 4);
+  const byStatus = filterReports(store.items, { status: 'in_progress' });
+  assert.deepEqual(ids(byStatus), [1, 2]);
+  const etienne = filterOptions(store.items, { status: 'in_progress' }).assignee.find((o) => o.label === 'Etienne Gnimpieba Zohim').value;
+  const both = filterReports(store.items, { status: 'in_progress', assignee: etienne });
+  assert.deepEqual(both.map((r) => r.summary), ['Details page crashes on empty gene']);
+  // A project filter narrows the same way.
+  assert.deepEqual(ids(filterReports(store.items, { status: 'in_progress', project: 'BNFR' })), [2]);
+  assert.deepEqual(ids(filterReports(store.items, { status: 'in_progress', assignee: etienne, project: 'BNFR' })), []);
+  assert.deepEqual(ids(filterReports(store.items, { project: 'GERMANIUM' })), [1, 3]);
+});
+
+test('My reports: a status and an assignee edit reach the fake transport and show in the list', async () => {
+  const transport = fakeTransport();
+  const store = createReportStore();
+  await store.load(() => transport.fetchMyFeedback());
+  assert.deepEqual(editCapability({ canEdit: true, members: scenarioMembers, transport }), { status: true, assignee: true });
+
+  assert.equal(await setStatus(store, transport, row(store, 3), 'done'), true);
+  assert.equal(await setAssignee(store, transport, row(store, 2), 'u3'), true);
+  assert.deepEqual(transport.calls, [['state', 3, 'done'], ['assignee', 'BNFR-21', 'u3']]);
+
+  assert.equal(row(store, 3).triageState, 'done');
+  assert.equal(assigneeLabel(row(store, 2)), 'Pat Lee');
+  assert.deepEqual(ids(filterReports(store.items, { status: 'done' })), [3, 4]);
+  assert.deepEqual(ids(filterReports(store.items, { assignee: 'Pat Lee' })), [2]);
+});
+
+test('My reports: a status edit the fake transport rejects goes back to the previous status', async () => {
+  const transport = fakeTransport({ reject: true });
+  const store = createReportStore();
+  await store.load(() => transport.fetchMyFeedback());
+  const edit = setStatus(store, transport, row(store, 3), 'done');
+  assert.equal(row(store, 3).triageState, 'done', 'shown at once');
+  assert.equal(await edit, false);
+  assert.deepEqual(transport.calls, [['state', 3, 'done']]);
+  assert.equal(row(store, 3).triageState, 'new');
+  assert.deepEqual(ids(filterReports(store.items, { status: 'done' })), [4]);
 });

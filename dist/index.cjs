@@ -1075,6 +1075,7 @@ var import_antd3 = require("antd");
 var STATE_LABELS = { new: "New", acknowledged: "Acknowledged", in_progress: "In progress", testing: "Testing", done: "Done", dismissed: "Dismissed" };
 var KIND_LABELS = { bug: "Bug", idea: "Idea", question: "Question", "report-tool": "Report tool" };
 var UNASSIGNED = "unassigned";
+var NO_PROJECT = "no-project";
 function readAssignee(v) {
   var _a;
   if (!v) return null;
@@ -1099,9 +1100,28 @@ function assigneeMemberId(assignee, members) {
   const named = list.filter((m) => m.name === assignee.name);
   return named.length === 1 ? named[0].id : void 0;
 }
+function readProject(v) {
+  if (!v) return null;
+  if (typeof v === "string") return v;
+  if (typeof v !== "object") return null;
+  const p = v.key || v.prefix || v.name;
+  return p ? String(p) : null;
+}
+function projectOf(report) {
+  var _a;
+  const p = readProject(report == null ? void 0 : report.project) || readProject((_a = report == null ? void 0 : report.ticket) == null ? void 0 : _a.project);
+  if (p) return p;
+  const key = typeof (report == null ? void 0 : report.ticketKey) === "string" ? report.ticketKey : "";
+  const dash = key.lastIndexOf("-");
+  return dash > 0 ? key.slice(0, dash) : null;
+}
 var assigneeKey = (report) => {
   var _a, _b;
   return (_b = (_a = assigneeOf(report)) == null ? void 0 : _a.name) != null ? _b : UNASSIGNED;
+};
+var projectKey = (report) => {
+  var _a;
+  return (_a = projectOf(report)) != null ? _a : NO_PROJECT;
 };
 var stateLabel = (s) => STATE_LABELS[s] || s;
 var kindLabel = (k) => KIND_LABELS[k] || k;
@@ -1119,7 +1139,10 @@ function filterOptions(items, selected = {}) {
     var _a;
     return (_a = assigneeOf(r)) == null ? void 0 : _a.name;
   }).filter(Boolean));
+  const projects = new Set(list.map(projectOf).filter(Boolean));
+  const noProject = list.some((r) => !projectOf(r)) || selected.project === NO_PROJECT;
   if (selected.status) states.add(selected.status);
+  if (selected.project && selected.project !== NO_PROJECT) projects.add(selected.project);
   if (selected.kind) kinds.add(selected.kind);
   if (selected.assignee && selected.assignee !== UNASSIGNED) names.add(selected.assignee);
   return {
@@ -1128,11 +1151,15 @@ function filterOptions(items, selected = {}) {
       { value: UNASSIGNED, label: "Unassigned" },
       ...[...names].sort((a, b) => a.localeCompare(b)).map((n) => ({ value: n, label: n }))
     ],
-    kind: [...kinds].map((k) => ({ value: k, label: kindLabel(k) }))
+    kind: [...kinds].map((k) => ({ value: k, label: kindLabel(k) })),
+    project: [
+      ...[...projects].sort((a, b) => a.localeCompare(b)).map((p) => ({ value: p, label: p })),
+      ...noProject ? [{ value: NO_PROJECT, label: "No project" }] : []
+    ]
   };
 }
-function filterReports(items, { status, assignee, kind } = {}) {
-  return (items || []).filter((r) => (!status || r.triageState === status) && (!kind || r.kind === kind) && (!assignee || assigneeKey(r) === assignee));
+function filterReports(items, { status, assignee, kind, project } = {}) {
+  return (items || []).filter((r) => (!status || r.triageState === status) && (!kind || r.kind === kind) && (!assignee || assigneeKey(r) === assignee) && (!project || projectKey(r) === project));
 }
 function editCapability({ canEdit, members, transport } = {}) {
   const can = canEdit === true;
@@ -1250,7 +1277,7 @@ function relTime(iso) {
 }
 var STATUS_OPTIONS = Object.keys(STATE_LABELS).map((st) => ({ value: st, label: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(StatusLabel, { state: st }) }));
 var UNASSIGN = "__unassigned";
-var NO_FILTERS = { status: void 0, assignee: void 0, kind: void 0 };
+var NO_FILTERS = { status: void 0, project: void 0, assignee: void 0, kind: void 0 };
 var small = { size: "small", popupMatchSelectWidth: false };
 function MyReports({ onOpenTicket, refreshKey, canEdit, members }) {
   const { transport, myReports } = useReportConfig();
@@ -1313,6 +1340,18 @@ function MyReports({ onOpenTicket, refreshKey, canEdit, members }) {
         {
           ...small,
           allowClear: true,
+          placeholder: "All projects",
+          "aria-label": "Filter by project",
+          value: filters.project,
+          onChange: setFilter("project"),
+          options: options.project
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+        import_antd3.Select,
+        {
+          ...small,
+          allowClear: true,
           placeholder: "All assignees",
           "aria-label": "Filter by assignee",
           value: filters.assignee,
@@ -1338,6 +1377,7 @@ function MyReports({ onOpenTicket, refreshKey, canEdit, members }) {
       var _a;
       const editAssignee = can.assignee && !!r.ticketKey;
       const editing = can.status || editAssignee;
+      const project = projectOf(r);
       return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: `kf-report${editing ? " kf-report--edit" : ""}`, children: [
         /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(StatusIcon, { state: r.triageState }),
         /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: { minWidth: 0 }, children: [
@@ -1347,6 +1387,7 @@ function MyReports({ onOpenTicket, refreshKey, canEdit, members }) {
               /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: `kf-st-label kf-st--${r.triageState}`, children: STATE_LABELS[r.triageState] || r.triageState }),
               " \xB7 ",
               KIND_LABELS[r.kind] || r.kind,
+              project ? ` \xB7 ${project}` : "",
               " \xB7 ",
               relTime(r.createdAt),
               r.route ? ` \xB7 ${r.route}` : ""
@@ -2103,7 +2144,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.13.0";
+var WIDGET_VERSION = "1.14.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT2 = 280;

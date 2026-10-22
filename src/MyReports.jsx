@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Empty, Skeleton, Typography, Button, Select } from 'antd';
 import { useReportConfig } from './ReportProvider';
-import { STATE_LABELS, KIND_LABELS, assigneeOf, assigneeLabel, assigneeMemberId, filterOptions, filterReports, editCapability, createReportStore } from './reportFilters';
+import { STATE_LABELS, KIND_LABELS, assigneeOf, assigneeLabel, assigneeMemberId, projectOf, filterOptions, filterReports, editCapability, createReportStore } from './reportFilters';
 
 export { STATE_LABELS, KIND_LABELS };
 
@@ -41,7 +41,7 @@ export function relTime(iso) {
 
 const STATUS_OPTIONS = Object.keys(STATE_LABELS).map((st) => ({ value: st, label: <StatusLabel state={st} /> }));
 const UNASSIGN = '__unassigned';
-const NO_FILTERS = { status: undefined, assignee: undefined, kind: undefined };
+const NO_FILTERS = { status: undefined, project: undefined, assignee: undefined, kind: undefined };
 
 // Popups stay in antd's body portal (no getPopupContainer): the row's hover transform would clip them.
 const small = { size: 'small', popupMatchSelectWidth: false };
@@ -94,6 +94,8 @@ export default function MyReports({ onOpenTicket, refreshKey, canEdit, members }
         <Select {...small} ref={statusFilter} allowClear placeholder="All statuses" aria-label="Filter by status"
           value={filters.status} onChange={setFilter('status')}
           options={options.status.map((o) => ({ value: o.value, label: <StatusLabel state={o.value} /> }))} />
+        <Select {...small} allowClear placeholder="All projects" aria-label="Filter by project"
+          value={filters.project} onChange={setFilter('project')} options={options.project} />
         <Select {...small} allowClear placeholder="All assignees" aria-label="Filter by assignee"
           value={filters.assignee} onChange={setFilter('assignee')} options={options.assignee} />
         {(options.kind.length > 1 || filters.kind) && (
@@ -109,13 +111,14 @@ export default function MyReports({ onOpenTicket, refreshKey, canEdit, members }
       {rows.map((r) => {
         const editAssignee = can.assignee && !!r.ticketKey;
         const editing = can.status || editAssignee;
+        const project = projectOf(r);
         return (
           <div className={`kf-report${editing ? ' kf-report--edit' : ''}`} key={r.id}>
             <StatusIcon state={r.triageState} />
             <div style={{ minWidth: 0 }}>
               <div className="t" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.ticket?.title || r.summary}</div>
               <div className="s">
-                <span className="kf-report-meta"><span className={`kf-st-label kf-st--${r.triageState}`}>{STATE_LABELS[r.triageState] || r.triageState}</span> · {KIND_LABELS[r.kind] || r.kind} · {relTime(r.createdAt)}{r.route ? ` · ${r.route}` : ''}</span>
+                <span className="kf-report-meta"><span className={`kf-st-label kf-st--${r.triageState}`}>{STATE_LABELS[r.triageState] || r.triageState}</span> · {KIND_LABELS[r.kind] || r.kind}{project ? ` · ${project}` : ''} · {relTime(r.createdAt)}{r.route ? ` · ${r.route}` : ''}</span>
                 <span className="kf-report-who">{` · ${assigneeLabel(r)}`}</span>
               </div>
             </div>
