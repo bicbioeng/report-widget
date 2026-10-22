@@ -80,8 +80,16 @@ export interface MyReport {
   createdAt: string;
   route?: string | null;
   ticketKey?: string | null;
-  ticket?: { title?: string } | null;
+  /** Read first; falls back to ticket.assignee, then 'Unassigned'. */
+  assignee?: ReportAssignee;
+  ticket?: { title?: string; assignee?: ReportAssignee } | null;
 }
+
+/** Shown as name, else displayName, else email; a plain string is the name. */
+export type ReportAssignee = { id?: string | number; name?: string; displayName?: string; email?: string } | string | null;
+
+/** Someone a report's ticket can be assigned to (My reports staff editing). */
+export interface ReportMember { id: string | number; name: string; email?: string }
 
 export interface ReportTransport {
   fetchFeedbackConfig(): Promise<FeedbackConfig>;
@@ -91,6 +99,10 @@ export interface ReportTransport {
   finalizeFeedback(id: string | number): Promise<unknown>;
   transcribeAudio(blob: Blob, opts?: { filename?: string; language?: string }): Promise<{ text?: string; provider?: string; unavailable?: boolean; error?: string }>;
   fetchMyFeedback(): Promise<{ items: MyReport[] }>;
+  /** Optional (staff editing in My reports). Must reject on failure and surface its own error UI. */
+  updateFeedbackState?(id: string | number, state: string): Promise<unknown>;
+  /** Optional (staff editing in My reports). null unassigns. Must reject on failure and surface its own error UI. */
+  updateTicketAssignee?(ticketKey: string, assigneeId: string | number | null): Promise<unknown>;
 }
 
 export interface ReportConfig {
@@ -100,6 +112,8 @@ export interface ReportConfig {
   /** Used in the form copy. Default 'KIDS'. */
   appName?: string;
   getImpersonation?: () => { email?: string | null } | null;
+  /** Staff editing in My reports; MyReports props override it. */
+  myReports?: { canEdit?: boolean; members?: ReportMember[] };
 }
 
 export interface ReportPrefill { kind?: ReportKind; summary?: string; severity?: ReportSeverity; noAutoShot?: boolean }
@@ -112,7 +126,11 @@ export function FeedbackModal(props: {
   open: boolean; onClose: () => void; prefill?: ReportPrefill | null; onOpenTicket?: (ticketKey: string) => void;
   hidden: boolean; setHidden: (hidden: boolean) => void;
 }): ReactElement;
-export function MyReports(props: { onOpenTicket?: (ticketKey: string) => void; refreshKey?: unknown }): ReactElement;
+export function MyReports(props: {
+  onOpenTicket?: (ticketKey: string) => void; refreshKey?: unknown;
+  /** Show Status / Assignee dropdowns on each row (needs the matching transport methods). Default: config.myReports. */
+  canEdit?: boolean; members?: ReportMember[];
+}): ReactElement;
 export const OPEN_EVENT: 'kids:feedback:open';
 export function openFeedback(prefill?: ReportPrefill | null): void;
 

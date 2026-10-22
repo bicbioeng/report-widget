@@ -1,14 +1,14 @@
 "use client";
 
 // src/FeedbackWidget.jsx
-import React6, { useCallback as useCallback4, useEffect as useEffect7, useRef as useRef4, useState as useState6 } from "react";
+import React6, { useCallback as useCallback4, useEffect as useEffect7, useRef as useRef6, useState as useState5 } from "react";
 import { createPortal } from "react-dom";
 import { Tooltip as Tooltip3 } from "antd";
 import { MessageOutlined } from "@ant-design/icons";
 
 // src/FeedbackModal.jsx
-import React5, { useCallback as useCallback3, useEffect as useEffect6, useMemo as useMemo2, useRef as useRef3, useState as useState5 } from "react";
-import { Modal, Input as Input2, Button as Button4, Tabs, Typography as Typography3, Space as Space3, Tooltip as Tooltip2, message as message2, Collapse, Popover, Upload, Alert as Alert2 } from "antd";
+import React5, { useCallback as useCallback3, useEffect as useEffect6, useMemo as useMemo2, useRef as useRef5, useState as useState4 } from "react";
+import { Modal, Input as Input2, Button as Button4, Tabs, Typography as Typography3, Space as Space2, Tooltip as Tooltip2, message as message2, Collapse, Popover, Upload, Alert as Alert2 } from "antd";
 import {
   BugOutlined,
   BulbOutlined,
@@ -53,13 +53,13 @@ function clampZoom(next, maxZoom) {
   return z;
 }
 var MAX_PCT = 400;
-var maxZoomFor = (fit) => Math.max(1, MAX_PCT / 100 / fit);
+var maxZoomFor = (fit2) => Math.max(1, MAX_PCT / 100 / fit2);
 var PCT_STEP = 25;
-function stepZoom(zoom, fit, dir) {
-  const pct = zoom * fit * 100;
+function stepZoom(zoom, fit2, dir) {
+  const pct = zoom * fit2 * 100;
   const k = pct / PCT_STEP;
   const next = (dir > 0 ? Math.floor(k + 1e-6) + 1 : Math.ceil(k - 1e-6) - 1) * PCT_STEP;
-  return clampZoom(next / 100 / fit, maxZoomFor(fit));
+  return clampZoom(next / 100 / fit2, maxZoomFor(fit2));
 }
 function clientToImage(clientX, clientY, rect, natW, natH) {
   const x = Math.min(natW, Math.max(0, (clientX - rect.left) / rect.width * natW));
@@ -188,7 +188,7 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
   const [textValue, setTextValue] = useState("");
   const [exporting, setExporting] = useState(false);
   const [zoom, setZoom] = useState(1);
-  const [fit, setFit] = useState(1);
+  const [fit2, setFit] = useState(1);
   const [panReady, setPanReady] = useState(false);
   const [panning, setPanning] = useState(false);
   const panRef = useRef(null);
@@ -270,8 +270,8 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
   }, [ready]);
   const natW = ((_a = imgRef.current) == null ? void 0 : _a.naturalWidth) || 0;
   const natH = ((_b = imgRef.current) == null ? void 0 : _b.naturalHeight) || 0;
-  const scale = fit * zoom;
-  const maxZoom = maxZoomFor(fit);
+  const scale = fit2 * zoom;
+  const maxZoom = maxZoomFor(fit2);
   const dispW = Math.floor(natW * scale);
   const dispH = Math.floor(natH * scale);
   const textBox = textAt && textBoxRect(textAt.cx, textAt.cy, dispW, dispH);
@@ -286,7 +286,7 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
     stage.scrollLeft = scrollToAnchor(stage.scrollLeft, r.left, r.width, img.naturalWidth, a.ix, a.px);
     stage.scrollTop = scrollToAnchor(stage.scrollTop, r.top, r.height, img.naturalHeight, a.iy, a.py);
     lastAnchorRef.current = { ...a, sl: stage.scrollLeft, st: stage.scrollTop };
-  }, [zoom, fit]);
+  }, [zoom, fit2]);
   const commitText = () => {
     const at = takeOnce(textAtRef);
     if (!at) return;
@@ -312,8 +312,8 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
     zoomRef.current = z;
     setZoom(z);
   };
-  const zoomIn = () => zoomTo(stepZoom(zoomRef.current, fit, 1));
-  const zoomOut = () => zoomTo(stepZoom(zoomRef.current, fit, -1));
+  const zoomIn = () => zoomTo(stepZoom(zoomRef.current, fit2, 1));
+  const zoomOut = () => zoomTo(stepZoom(zoomRef.current, fit2, -1));
   const zoomFit = () => zoomTo(1);
   const deleteSelected = () => {
     if (selected == null) return;
@@ -581,8 +581,8 @@ function Annotator({ src, onDone, onCancel, doneLabel = "Use this screenshot", s
 }
 
 // src/VoicePanel.jsx
-import React3, { useEffect as useEffect4, useState as useState3 } from "react";
-import { Button as Button2, Space as Space2, Typography, Alert } from "antd";
+import React3, { useEffect as useEffect4, useRef as useRef3 } from "react";
+import { Button as Button2, Typography, Alert } from "antd";
 import { AudioOutlined, StopOutlined, DeleteOutlined as DeleteOutlined2, LoadingOutlined } from "@ant-design/icons";
 
 // src/recorders.js
@@ -934,32 +934,56 @@ function useReportConfig() {
 // src/VoicePanel.jsx
 import { Fragment, jsx as jsx3, jsxs as jsxs2 } from "react/jsx-runtime";
 var { Text } = Typography;
-function VoicePanel({ value, onChange, transcriptionAvailable }) {
+var NEEDS_TEXT = " Write a few words above so you can send it.";
+function VoicePanel({ open = true, value, onChange, session, transcriptionAvailable }) {
   const { transport } = useReportConfig();
   const rec = useMediaRecorder({ kind: "audio", captions: true, maxMs: 5 * 60 * 1e3 });
-  const [transcribing, setTranscribing] = useState3(false);
-  const [note, setNote] = useState3(null);
+  const { transcribing, note } = session.status;
+  const setNote = (n) => session.setStatus((s) => ({ ...s, note: n }));
+  const recordingId = useRef3(null);
+  const start = () => {
+    recordingId.current = session.next();
+    session.setStatus({ transcribing: null, note: null });
+    rec.start();
+  };
+  const remove = () => {
+    session.next();
+    session.setStatus({ transcribing: null, note: null });
+    onChange(null);
+  };
+  useEffect4(() => {
+    if (open) return;
+    if (rec.status === "recording") rec.stop();
+    else if (rec.status === "idle") rec.reset();
+  }, [open, rec.status]);
   useEffect4(() => {
     if (!rec.result) return;
+    const id = recordingId.current;
+    if (!open || id === null || !session.isCurrent(id)) {
+      rec.reset();
+      return;
+    }
     const { blob, mimeType, durationMs, captions } = rec.result;
     const filename = `voice-note.${extensionFor(mimeType)}`;
-    onChange({ blob, mimeType, durationMs, filename, transcript: captions || "", transcriptSource: captions ? "browser" : null });
+    const added2 = Boolean(captions) && session.addTranscript(id, captions);
+    onChange({ blob, mimeType, durationMs, filename, transcript: added2 ? captions : "", transcriptSource: added2 ? "browser" : null });
     rec.reset();
     (async () => {
-      setTranscribing(true);
-      setNote(null);
+      session.setStatus({ transcribing: id, note: null });
       try {
         const out = await transport.transcribeAudio(blob, { filename });
+        if (!session.isCurrent(id)) return;
         if (out.unavailable) {
-          setNote(captions ? "Transcribed by your browser. An admin can add a transcription key under AI Settings for higher accuracy." : "No transcription is configured on the server and this browser has no speech recognition \u2014 the recording is attached as audio.");
+          setNote(captions ? "Transcribed by your browser. An admin can add a transcription key under AI Settings for higher accuracy." : `No transcription is configured on the server and this browser has no speech recognition \u2014 the recording is attached as audio.${NEEDS_TEXT}`);
         } else if (out.text) {
-          onChange((prev) => ({ ...prev || {}, transcript: out.text, transcriptSource: out.provider }));
+          if (session.addTranscript(id, out.text)) onChange((prev) => ({ ...prev || {}, transcript: out.text, transcriptSource: out.provider }));
           setNote(null);
         }
       } catch (e) {
-        setNote(captions ? `Kept your browser's captions \u2014 ${e.message}. The recording is attached either way.` : `Transcription failed: ${e.message}. The recording is still attached to the report.`);
+        if (!session.isCurrent(id)) return;
+        setNote(captions ? `Kept your browser's captions \u2014 ${e.message}. The recording is attached either way.` : `Transcription failed: ${e.message}. The recording is still attached to the report.${NEEDS_TEXT}`);
       } finally {
-        setTranscribing(false);
+        session.setStatus((s) => s.transcribing === id ? { ...s, transcribing: null } : s);
       }
     })();
   }, [rec.result]);
@@ -967,12 +991,17 @@ function VoicePanel({ value, onChange, transcriptionAvailable }) {
     return /* @__PURE__ */ jsx3(Text, { type: "secondary", style: { fontSize: 12.5 }, children: "Voice notes need a browser with microphone recording." });
   }
   const recording = rec.status === "recording";
+  const added = Boolean(value == null ? void 0 : value.transcript) && !recording;
   return /* @__PURE__ */ jsxs2("div", { style: { display: "grid", gap: 8 }, children: [
     /* @__PURE__ */ jsxs2("div", { className: "kf-voice", children: [
       recording ? /* @__PURE__ */ jsxs2(Button2, { danger: true, icon: /* @__PURE__ */ jsx3(StopOutlined, {}), onClick: rec.stop, children: [
         "Stop ",
         formatMs(rec.elapsedMs)
-      ] }) : /* @__PURE__ */ jsx3(Button2, { icon: /* @__PURE__ */ jsx3(AudioOutlined, {}), loading: rec.status === "requesting", onClick: rec.start, disabled: transcribing, children: value ? "Record again" : "Describe it by voice" }),
+      ] }) : (
+        // Not disabled while transcribing: disabling the focused button drops focus to <body>.
+        // Recording again is safe — the session drops the older transcript.
+        /* @__PURE__ */ jsx3(Button2, { icon: /* @__PURE__ */ jsx3(AudioOutlined, {}), loading: rec.status === "requesting", onClick: start, children: value ? "Record again" : "Describe it by voice" })
+      ),
       recording && /* @__PURE__ */ jsx3("div", { className: "kf-level", children: /* @__PURE__ */ jsx3("i", { style: { width: `${Math.round(rec.level * 100)}%` } }) }),
       !recording && value && /* @__PURE__ */ jsxs2(Fragment, { children: [
         /* @__PURE__ */ jsxs2(Text, { type: "secondary", style: { fontSize: 12 }, children: [
@@ -980,7 +1009,7 @@ function VoicePanel({ value, onChange, transcriptionAvailable }) {
           " \xB7 ",
           formatMs(value.durationMs || 0)
         ] }),
-        /* @__PURE__ */ jsx3(Button2, { size: "small", type: "text", icon: /* @__PURE__ */ jsx3(DeleteOutlined2, {}), onClick: () => onChange(null) })
+        /* @__PURE__ */ jsx3(Button2, { size: "small", type: "text", icon: /* @__PURE__ */ jsx3(DeleteOutlined2, {}), onClick: remove, "aria-label": "Remove voice note" })
       ] }),
       transcribing && /* @__PURE__ */ jsxs2(Text, { type: "secondary", style: { fontSize: 12 }, children: [
         /* @__PURE__ */ jsx3(LoadingOutlined, {}),
@@ -988,36 +1017,174 @@ function VoicePanel({ value, onChange, transcriptionAvailable }) {
       ] })
     ] }),
     recording && /* @__PURE__ */ jsx3("div", { className: "kf-caption", children: rec.liveCaption || (supportsSpeech() ? "Listening\u2026" : "Recording (live captions are not available in this browser).") }),
-    !recording && !value && /* @__PURE__ */ jsx3(Text, { type: "secondary", style: { fontSize: 12 }, children: transcriptionAvailable ? "Say what happened \u2014 the recording is attached and transcribed into the report." : supportsSpeech() ? "Say what happened \u2014 your browser captions it and the recording is attached." : "Say what happened \u2014 the recording is attached to the report." }),
+    !recording && !value && /* @__PURE__ */ jsx3(Text, { type: "secondary", style: { fontSize: 12 }, children: transcriptionAvailable ? "Say what happened \u2014 it is written into the description above and the recording is attached." : supportsSpeech() ? "Say what happened \u2014 your browser writes it into the description above and the recording is attached." : "Say what happened \u2014 the recording is attached to the report." }),
     rec.error && /* @__PURE__ */ jsx3(Alert, { type: "warning", showIcon: true, message: rec.error, style: { borderRadius: 8 } }),
     note && /* @__PURE__ */ jsx3(Alert, { type: "info", showIcon: true, message: note, style: { borderRadius: 8 } }),
-    (value == null ? void 0 : value.transcript) && !recording && /* @__PURE__ */ jsxs2(Space2, { direction: "vertical", size: 2, style: { width: "100%" }, children: [
-      /* @__PURE__ */ jsxs2(Text, { type: "secondary", style: { fontSize: 12 }, children: [
-        "Transcript",
-        value.transcriptSource ? ` (${value.transcriptSource})` : "",
-        " \u2014 you can edit it:"
-      ] }),
-      /* @__PURE__ */ jsx3(
-        "textarea",
-        {
-          className: "ant-input",
-          style: { width: "100%", borderRadius: 8, minHeight: 64, fontSize: 13 },
-          value: value.transcript,
-          onChange: (e) => onChange({ ...value, transcript: e.target.value })
-        }
-      )
-    ] })
+    /* @__PURE__ */ jsx3("div", { "aria-live": "polite", style: added ? void 0 : { marginTop: -8 }, children: added && /* @__PURE__ */ jsxs2(Text, { type: "secondary", style: { fontSize: 12 }, children: [
+      "Added to the description above (",
+      value.transcriptSource === "browser" ? "browser captions" : `transcribed by ${value.transcriptSource || "the server"}`,
+      ")."
+    ] }) })
   ] });
 }
 
 // src/MyReports.jsx
-import React4, { useEffect as useEffect5, useState as useState4 } from "react";
-import { Empty, Skeleton, Typography as Typography2, Button as Button3 } from "antd";
+import React4, { useEffect as useEffect5, useRef as useRef4, useState as useState3 } from "react";
+import { Empty, Skeleton, Typography as Typography2, Button as Button3, Select } from "antd";
+
+// src/reportFilters.js
+var STATE_LABELS = { new: "New", acknowledged: "Acknowledged", in_progress: "In progress", testing: "Testing", done: "Done", dismissed: "Dismissed" };
+var KIND_LABELS = { bug: "Bug", idea: "Idea", question: "Question", "report-tool": "Report tool" };
+var UNASSIGNED = "unassigned";
+function readAssignee(v) {
+  var _a;
+  if (!v) return null;
+  if (typeof v === "string") return { id: null, name: v };
+  if (typeof v !== "object") return null;
+  const name = v.name || v.displayName || v.email;
+  return name ? { id: (_a = v.id) != null ? _a : null, name: String(name) } : null;
+}
+function assigneeOf(report) {
+  var _a;
+  return readAssignee(report == null ? void 0 : report.assignee) || readAssignee((_a = report == null ? void 0 : report.ticket) == null ? void 0 : _a.assignee);
+}
+function assigneeLabel(report) {
+  var _a;
+  return ((_a = assigneeOf(report)) == null ? void 0 : _a.name) || "Unassigned";
+}
+function assigneeMemberId(assignee, members) {
+  var _a;
+  if (!assignee) return null;
+  const list = members || [];
+  if (assignee.id != null && assignee.id !== "") return (_a = list.find((m) => String(m.id) === String(assignee.id))) == null ? void 0 : _a.id;
+  const named = list.filter((m) => m.name === assignee.name);
+  return named.length === 1 ? named[0].id : void 0;
+}
+var assigneeKey = (report) => {
+  var _a, _b;
+  return (_b = (_a = assigneeOf(report)) == null ? void 0 : _a.name) != null ? _b : UNASSIGNED;
+};
+var stateLabel = (s) => STATE_LABELS[s] || s;
+var kindLabel = (k) => KIND_LABELS[k] || k;
+var ORDER = Object.keys(STATE_LABELS);
+var byState = (a, b) => {
+  const i = ORDER.indexOf(a);
+  const j = ORDER.indexOf(b);
+  return (i < 0 ? ORDER.length : i) - (j < 0 ? ORDER.length : j);
+};
+function filterOptions(items, selected = {}) {
+  const list = items || [];
+  const states = new Set(list.map((r) => r.triageState).filter(Boolean));
+  const kinds = new Set(list.map((r) => r.kind).filter(Boolean));
+  const names = new Set(list.map((r) => {
+    var _a;
+    return (_a = assigneeOf(r)) == null ? void 0 : _a.name;
+  }).filter(Boolean));
+  if (selected.status) states.add(selected.status);
+  if (selected.kind) kinds.add(selected.kind);
+  if (selected.assignee && selected.assignee !== UNASSIGNED) names.add(selected.assignee);
+  return {
+    status: [...states].sort(byState).map((s) => ({ value: s, label: stateLabel(s) })),
+    assignee: [
+      { value: UNASSIGNED, label: "Unassigned" },
+      ...[...names].sort((a, b) => a.localeCompare(b)).map((n) => ({ value: n, label: n }))
+    ],
+    kind: [...kinds].map((k) => ({ value: k, label: kindLabel(k) }))
+  };
+}
+function filterReports(items, { status, assignee, kind } = {}) {
+  return (items || []).filter((r) => (!status || r.triageState === status) && (!kind || r.kind === kind) && (!assignee || assigneeKey(r) === assignee));
+}
+function editCapability({ canEdit, members, transport } = {}) {
+  const can = canEdit === true;
+  return {
+    status: can && typeof (transport == null ? void 0 : transport.updateFeedbackState) === "function",
+    assignee: can && Array.isArray(members) && members.length > 0 && typeof (transport == null ? void 0 : transport.updateTicketAssignee) === "function"
+  };
+}
+var FIELDS = {
+  status: { read: (r) => r.triageState, write: (r, v) => ({ ...r, triageState: v }) },
+  // Both places, so an explicit unassign is not read back from ticket.assignee.
+  assignee: {
+    read: (r) => {
+      var _a;
+      return { assignee: r.assignee, ticket: (_a = r.ticket) == null ? void 0 : _a.assignee };
+    },
+    write: (r, v) => ({ ...r, assignee: v.assignee, ticket: r.ticket ? { ...r.ticket, assignee: v.ticket } : r.ticket })
+  }
+};
+function createReportStore(onChange = () => {
+}) {
+  let items = null;
+  let started = 0;
+  let landed = 0;
+  const edits = /* @__PURE__ */ new Map();
+  const emit = () => onChange(items);
+  const write = (id, field, value) => {
+    if (items) items = items.map((r) => r.id === id ? FIELDS[field].write(r, value) : r);
+  };
+  return {
+    get items() {
+      return items;
+    },
+    isBusy: (id, field) => {
+      var _a;
+      return !!((_a = edits.get(`${id}:${field}`)) == null ? void 0 : _a.pending);
+    },
+    /** fetch: () => Promise<{ items }>. A failed fetch shows an empty list. */
+    load(fetch) {
+      const seq = ++started;
+      return new Promise((res) => res(fetch())).then((r) => (r == null ? void 0 : r.items) || [], () => []).then((list) => {
+        if (seq !== started) return;
+        landed = seq;
+        items = list;
+        for (const [k, e] of edits) {
+          const row = items.find((r) => r.id === e.id);
+          if (e.pending) {
+            if (row && seq > e.staleUntil) e.base = FIELDS[e.field].read(row);
+            write(e.id, e.field, e.value);
+          } else {
+            if (seq <= e.settledAt) write(e.id, e.field, e.value);
+            edits.delete(k);
+          }
+        }
+        emit();
+      });
+    },
+    /** Shows value at once, then call(); resolves true on success, false after reverting. */
+    edit(row, field, value, call) {
+      const k = `${row.id}:${field}`;
+      const prior = edits.get(k);
+      if (prior == null ? void 0 : prior.pending) return Promise.resolve(false);
+      const cur = (items == null ? void 0 : items.find((r) => r.id === row.id)) || row;
+      const e = { id: row.id, field, value, base: FIELDS[field].read(cur), pending: true, staleUntil: prior ? prior.settledAt : 0 };
+      edits.set(k, e);
+      write(row.id, field, value);
+      emit();
+      return new Promise((res) => res(call())).then(() => {
+        if (edits.get(k) !== e) return true;
+        e.pending = false;
+        e.settledAt = started;
+        if (landed === started) edits.delete(k);
+        emit();
+        return true;
+      }, () => {
+        if (edits.get(k) === e) {
+          if (prior && !prior.pending && prior.settledAt > landed) edits.set(k, prior);
+          else edits.delete(k);
+          write(e.id, field, e.base);
+          emit();
+        }
+        return false;
+      });
+    }
+  };
+}
+
+// src/MyReports.jsx
 import { jsx as jsx4, jsxs as jsxs3 } from "react/jsx-runtime";
 var { Text: Text2 } = Typography2;
 var STATE_COLORS = { new: "blue", acknowledged: "geekblue", in_progress: "gold", testing: "cyan", done: "green", dismissed: "default" };
-var STATE_LABELS = { new: "New", acknowledged: "Acknowledged", in_progress: "In progress", testing: "Testing", done: "Done", dismissed: "Dismissed" };
-var KIND_LABELS = { bug: "Bug", idea: "Idea", question: "Question", "report-tool": "Report tool" };
 var FILL = { in_progress: 0.5, testing: 0.75 };
 var C = 2 * Math.PI * 3;
 function StatusIcon({ state: state2 }) {
@@ -1042,39 +1209,145 @@ function relTime(iso) {
   if (s < 7 * 86400) return `${Math.floor(s / 86400)} d ago`;
   return d.toLocaleDateString();
 }
-function MyReports({ onOpenTicket, refreshKey }) {
-  const { transport } = useReportConfig();
-  const [items, setItems] = useState4(null);
+var STATUS_OPTIONS = Object.keys(STATE_LABELS).map((st) => ({ value: st, label: /* @__PURE__ */ jsx4(StatusLabel, { state: st }) }));
+var UNASSIGN = "__unassigned";
+var NO_FILTERS = { status: void 0, assignee: void 0, kind: void 0 };
+var small = { size: "small", popupMatchSelectWidth: false };
+function MyReports({ onOpenTicket, refreshKey, canEdit, members }) {
+  const { transport, myReports } = useReportConfig();
+  const [, rerender] = useState3(0);
+  const store = useRef4(null);
+  if (!store.current) store.current = createReportStore(() => rerender((n) => n + 1));
+  const [filters, setFilters] = useState3(NO_FILTERS);
+  const statusFilter = useRef4(null);
   useEffect5(() => {
-    let alive = true;
-    transport.fetchMyFeedback().then((r) => {
-      if (alive) setItems(r.items || []);
-    }).catch(() => {
-      if (alive) setItems([]);
-    });
-    return () => {
-      alive = false;
-    };
+    store.current.load(() => transport.fetchMyFeedback());
   }, [refreshKey]);
+  const items = store.current.items;
   if (items === null) return /* @__PURE__ */ jsx4(Skeleton, { active: true, paragraph: { rows: 3 } });
   if (!items.length) return /* @__PURE__ */ jsx4(Empty, { description: "You have not reported anything yet.", image: Empty.PRESENTED_IMAGE_SIMPLE });
+  const team = members != null ? members : myReports == null ? void 0 : myReports.members;
+  const can = editCapability({ canEdit: canEdit != null ? canEdit : myReports == null ? void 0 : myReports.canEdit, members: team, transport });
+  const options = filterOptions(items, filters);
+  const rows = filterReports(items, filters);
+  const setFilter = (key) => (value) => setFilters((f) => ({ ...f, [key]: value }));
+  const clearFilters = () => {
+    var _a;
+    setFilters(NO_FILTERS);
+    (_a = statusFilter.current) == null ? void 0 : _a.focus();
+  };
+  const busy = (r, field) => store.current.isBusy(r.id, field);
+  const setStatus = (r, state2) => store.current.edit(r, "status", state2, () => transport.updateFeedbackState(r.id, state2));
+  const setAssignee = (r, value) => {
+    const m = value === UNASSIGN ? null : team.find((x) => x.id === value);
+    const next = m ? { id: m.id, name: m.name } : null;
+    store.current.edit(r, "assignee", { assignee: next, ticket: next }, () => transport.updateTicketAssignee(r.ticketKey, m ? m.id : null));
+  };
+  const assigneeValue = (r) => {
+    const a = assigneeOf(r);
+    const id = assigneeMemberId(a, team);
+    if (id === null) return UNASSIGN;
+    return id !== void 0 ? id : `name:${a.name}`;
+  };
+  const assigneeOptions = (r) => {
+    const v = assigneeValue(r);
+    const list = [{ value: UNASSIGN, label: "Unassigned" }, ...team.map((m) => ({ value: m.id, label: m.name }))];
+    return typeof v === "string" && v.startsWith("name:") ? [...list, { value: v, label: v.slice(5), disabled: true }] : list;
+  };
   return /* @__PURE__ */ jsxs3("div", { children: [
-    items.map((r) => {
+    /* @__PURE__ */ jsxs3("div", { className: "kf-reports-filters", children: [
+      /* @__PURE__ */ jsx4(
+        Select,
+        {
+          ...small,
+          ref: statusFilter,
+          allowClear: true,
+          placeholder: "All statuses",
+          "aria-label": "Filter by status",
+          value: filters.status,
+          onChange: setFilter("status"),
+          options: options.status.map((o) => ({ value: o.value, label: /* @__PURE__ */ jsx4(StatusLabel, { state: o.value }) }))
+        }
+      ),
+      /* @__PURE__ */ jsx4(
+        Select,
+        {
+          ...small,
+          allowClear: true,
+          placeholder: "All assignees",
+          "aria-label": "Filter by assignee",
+          value: filters.assignee,
+          onChange: setFilter("assignee"),
+          options: options.assignee
+        }
+      ),
+      (options.kind.length > 1 || filters.kind) && /* @__PURE__ */ jsx4(
+        Select,
+        {
+          ...small,
+          allowClear: true,
+          placeholder: "All kinds",
+          "aria-label": "Filter by kind",
+          value: filters.kind,
+          onChange: setFilter("kind"),
+          options: options.kind
+        }
+      )
+    ] }),
+    !rows.length && /* @__PURE__ */ jsx4(Empty, { description: "No reports match", image: Empty.PRESENTED_IMAGE_SIMPLE, children: /* @__PURE__ */ jsx4(Button3, { type: "link", onClick: clearFilters, children: "Clear filters" }) }),
+    rows.map((r) => {
       var _a;
-      return /* @__PURE__ */ jsxs3("div", { className: "kf-report", children: [
+      const editAssignee = can.assignee && !!r.ticketKey;
+      const editing = can.status || editAssignee;
+      return /* @__PURE__ */ jsxs3("div", { className: `kf-report${editing ? " kf-report--edit" : ""}`, children: [
         /* @__PURE__ */ jsx4(StatusIcon, { state: r.triageState }),
         /* @__PURE__ */ jsxs3("div", { style: { minWidth: 0 }, children: [
           /* @__PURE__ */ jsx4("div", { className: "t", style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: ((_a = r.ticket) == null ? void 0 : _a.title) || r.summary }),
           /* @__PURE__ */ jsxs3("div", { className: "s", children: [
-            /* @__PURE__ */ jsx4("span", { className: `kf-st-label kf-st--${r.triageState}`, children: STATE_LABELS[r.triageState] || r.triageState }),
-            " \xB7 ",
-            KIND_LABELS[r.kind] || r.kind,
-            " \xB7 ",
-            relTime(r.createdAt),
-            r.route ? ` \xB7 ${r.route}` : ""
+            /* @__PURE__ */ jsxs3("span", { className: "kf-report-meta", children: [
+              /* @__PURE__ */ jsx4("span", { className: `kf-st-label kf-st--${r.triageState}`, children: STATE_LABELS[r.triageState] || r.triageState }),
+              " \xB7 ",
+              KIND_LABELS[r.kind] || r.kind,
+              " \xB7 ",
+              relTime(r.createdAt),
+              r.route ? ` \xB7 ${r.route}` : ""
+            ] }),
+            /* @__PURE__ */ jsx4("span", { className: "kf-report-who", children: ` \xB7 ${assigneeLabel(r)}` })
           ] })
         ] }),
-        r.ticketKey && /* @__PURE__ */ jsx4(Button3, { size: "small", type: "link", onClick: () => onOpenTicket == null ? void 0 : onOpenTicket(r.ticketKey), children: r.ticketKey })
+        (editing || r.ticketKey) && /* @__PURE__ */ jsxs3("div", { className: "kf-report-end", children: [
+          editing && /* @__PURE__ */ jsxs3("div", { className: "kf-report-edit", children: [
+            can.status && /* @__PURE__ */ jsx4(
+              Select,
+              {
+                ...small,
+                className: "kf-report-status",
+                "aria-label": "Status",
+                value: r.triageState,
+                options: STATUS_OPTIONS,
+                onChange: (v) => setStatus(r, v),
+                disabled: busy(r, "status"),
+                loading: busy(r, "status")
+              }
+            ),
+            editAssignee && /* @__PURE__ */ jsx4(
+              Select,
+              {
+                ...small,
+                className: "kf-report-assignee",
+                "aria-label": "Assignee",
+                value: assigneeValue(r),
+                options: assigneeOptions(r),
+                onChange: (v) => setAssignee(r, v),
+                showSearch: true,
+                optionFilterProp: "label",
+                disabled: busy(r, "assignee"),
+                loading: busy(r, "assignee")
+              }
+            )
+          ] }),
+          r.ticketKey && /* @__PURE__ */ jsx4(Button3, { size: "small", type: "link", onClick: () => onOpenTicket == null ? void 0 : onOpenTicket(r.ticketKey), children: r.ticketKey })
+        ] })
       ] }, r.id);
     }),
     /* @__PURE__ */ jsx4(Text2, { type: "secondary", style: { fontSize: 12 }, children: "You are notified when a report changes state or gets a reply." })
@@ -1791,7 +2064,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.12.0";
+var WIDGET_VERSION = "1.13.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT2 = 280;
@@ -1834,7 +2107,8 @@ function buildDiagnostics({
       summary: clipText(f.summary),
       expected: clipText(f.expected),
       steps: clipText(f.steps),
-      transcript: clipText(f.transcript),
+      transcript: null,
+      // voice text is in summary; the key stays
       screenshot: f.shot ? { method: f.shot.method || null, annotated: Boolean(f.shot.annotated) } : null,
       voiceNote: f.voice ? { durationMs: (_a = f.voice.durationMs) != null ? _a : null, mimeType: f.voice.mimeType || null } : null,
       screenRecording: f.screen ? { durationMs: (_b = f.screen.durationMs) != null ? _b : null, mimeType: f.screen.mimeType || null } : null,
@@ -1878,15 +2152,102 @@ function pickOffer({ shot, picked, capturing, hidden }) {
     chip: Boolean(picked)
   };
 }
+var SUMMARY_MAX_LENGTH = 2e4;
+function isWholeLine(summary, start, text) {
+  const end = start + text.length;
+  return summary.startsWith(text, start) && (start === 0 || summary[start - 1] === "\n") && (end === summary.length || summary[end] === "\n");
+}
+function fit(text, room) {
+  if (text.length <= room) return text;
+  let cut = Math.max(0, room);
+  const code = text.charCodeAt(cut - 1);
+  if (code >= 55296 && code <= 56319) cut -= 1;
+  return text.slice(0, cut).trimEnd();
+}
+function placeAfter(prev, next, segment2, p, s) {
+  const changedEnd = prev.length - s;
+  if (changedEnd <= segment2.start) return segment2.start + next.length - prev.length;
+  if (p >= segment2.start + segment2.text.length) return segment2.start;
+  return null;
+}
+function trackSegment(prev, next, segment2) {
+  if (!segment2 || segment2.edited || prev === next) return segment2;
+  const min = Math.min(prev.length, next.length);
+  const same = (i) => prev[i] === next[i];
+  const sameFromEnd = (i) => prev[prev.length - 1 - i] === next[next.length - 1 - i];
+  let p = 0;
+  while (p < min && same(p)) p += 1;
+  let s = 0;
+  while (s < min - p && sameFromEnd(s)) s += 1;
+  let s2 = 0;
+  while (s2 < min && sameFromEnd(s2)) s2 += 1;
+  let p2 = 0;
+  while (p2 < min - s2 && same(p2)) p2 += 1;
+  const start = placeAfter(prev, next, segment2, p, s);
+  const ok = start !== null && start === placeAfter(prev, next, segment2, p2, s2) && isWholeLine(next, start, segment2.text);
+  return ok ? { ...segment2, start } : { ...segment2, edited: true };
+}
+function mergeTranscript(summary, transcript, last = null) {
+  const text = String(transcript || "").trim();
+  if (!text || (last == null ? void 0 : last.edited)) return { summary, inserted: last, added: false, truncated: false };
+  if (last) {
+    if (!isWholeLine(summary, last.start, last.text)) {
+      return { summary, inserted: { ...last, edited: true }, added: false, truncated: false };
+    }
+    const fitted2 = fit(text, SUMMARY_MAX_LENGTH - (summary.length - last.text.length));
+    const truncated2 = fitted2 !== text;
+    if (!fitted2) return { summary, inserted: last, added: false, truncated: truncated2 };
+    return {
+      summary: summary.slice(0, last.start) + fitted2 + summary.slice(last.start + last.text.length),
+      inserted: { start: last.start, text: fitted2 },
+      added: true,
+      truncated: truncated2
+    };
+  }
+  const blank = !summary.trim();
+  const fitted = fit(text, blank ? SUMMARY_MAX_LENGTH : SUMMARY_MAX_LENGTH - summary.length - 1);
+  const truncated = fitted !== text;
+  if (!fitted) return { summary, inserted: null, added: false, truncated };
+  if (blank) return { summary: fitted, inserted: { start: 0, text: fitted }, added: true, truncated };
+  return { summary: `${summary}
+${fitted}`, inserted: { start: summary.length + 1, text: fitted }, added: true, truncated };
+}
+function createVoiceRun() {
+  let id = 0;
+  let segment2 = null;
+  let known = null;
+  const edit = (summary) => {
+    if (segment2 && known !== null) segment2 = { ...segment2, inserted: trackSegment(known, summary, segment2.inserted) };
+    known = summary;
+  };
+  return {
+    next: () => ++id,
+    isCurrent: (i) => i === id,
+    clear: () => {
+      id += 1;
+      segment2 = null;
+      known = null;
+    },
+    edit,
+    add(summary, i, text) {
+      if (i !== id) return { summary, inserted: null, added: false, truncated: false };
+      edit(summary);
+      const r = mergeTranscript(summary, text, (segment2 == null ? void 0 : segment2.id) === i ? segment2.inserted : null);
+      segment2 = { id: i, inserted: r.inserted };
+      known = r.summary;
+      return r;
+    }
+  };
+}
 function feedbackPayload({ kind, severity, summary, expected, steps, voice, picked, context, pageUrl, route }) {
-  var _a;
   return {
     kind,
     severity: kind === "bug" ? severity : null,
     summary: summary.trim(),
     expected: expected.trim() || null,
     steps: steps.trim() || null,
-    transcript: ((_a = voice == null ? void 0 : voice.transcript) == null ? void 0 : _a.trim()) || null,
+    // The voice note's text is already in summary; the key stays for older consumers.
+    transcript: null,
     transcriptSource: (voice == null ? void 0 : voice.transcript) ? voice.transcriptSource || null : null,
     pageUrl,
     route,
@@ -1922,7 +2283,7 @@ var annotatedName = (name) => {
   return base.endsWith("-annotated") ? `${base}.png` : `${base}-annotated.png`;
 };
 function FileThumb({ file }) {
-  const [url, setUrl] = useState5(null);
+  const [url, setUrl] = useState4(null);
   useEffect6(() => {
     const u = URL.createObjectURL(file);
     setUrl(u);
@@ -1934,43 +2295,62 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
   var _a;
   const { transport, buildSha, appName, getImpersonation } = useReportConfig();
   const meta = () => pageMetadata({ buildSha, getImpersonation });
-  const [tab, setTab] = useState5("new");
-  const [config, setConfig] = useState5(null);
-  const [kind, setKind] = useState5("bug");
-  const [severity, setSeverity] = useState5("annoying");
-  const [summary, setSummary] = useState5("");
-  const [expected, setExpected] = useState5("");
-  const [steps, setSteps] = useState5("");
-  const [shot, setShot] = useState5(null);
-  const [annotateTarget, setAnnotateTarget] = useState5(null);
-  const [capturing, setCapturing] = useState5(false);
-  const [picked, setPicked] = useState5(null);
-  const [voice, setVoice] = useState5(null);
-  const [screen, setScreen] = useState5(null);
-  const [files, setFiles] = useState5([]);
-  const [submitting, setSubmitting] = useState5(false);
-  const [progress, setProgress] = useState5("");
-  const [done, setDone] = useState5(null);
-  const [refreshKey, setRefreshKey] = useState5(0);
-  const [lastError, setLastError] = useState5(null);
-  const [failedUploads, setFailedUploads] = useState5([]);
-  const [problem, setProblem] = useState5(null);
-  const autoShotDone = useRef3(false);
-  const copyRef = useRef3(null);
-  const pickRef = useRef3(null);
-  const refocusPick = useRef3(false);
-  const pickAbort = useRef3(null);
-  const locksBeforeOpen = useRef3(null);
+  const [tab, setTab] = useState4("new");
+  const [config, setConfig] = useState4(null);
+  const [kind, setKind] = useState4("bug");
+  const [severity, setSeverity] = useState4("annoying");
+  const [summary, setSummary] = useState4("");
+  const [expected, setExpected] = useState4("");
+  const [steps, setSteps] = useState4("");
+  const [shot, setShot] = useState4(null);
+  const [annotateTarget, setAnnotateTarget] = useState4(null);
+  const [capturing, setCapturing] = useState4(false);
+  const [picked, setPicked] = useState4(null);
+  const [voice, setVoice] = useState4(null);
+  const [screen, setScreen] = useState4(null);
+  const [files, setFiles] = useState4([]);
+  const [submitting, setSubmitting] = useState4(false);
+  const [progress, setProgress] = useState4("");
+  const [done, setDone] = useState4(null);
+  const [refreshKey, setRefreshKey] = useState4(0);
+  const [lastError, setLastError] = useState4(null);
+  const [failedUploads, setFailedUploads] = useState4([]);
+  const [problem, setProblem] = useState4(null);
+  const autoShotDone = useRef5(false);
+  const copyRef = useRef5(null);
+  const pickRef = useRef5(null);
+  const refocusPick = useRef5(false);
+  const pickAbort = useRef5(null);
+  const locksBeforeOpen = useRef5(null);
   if (!open) locksBeforeOpen.current = null;
   else if (!locksBeforeOpen.current) locksBeforeOpen.current = scrollLockKeys();
   const noteError = (stage, e) => setLastError(errorRecord(stage, e));
+  const summaryRef = useRef5(summary);
+  summaryRef.current = summary;
+  const voiceRun = useRef5(null);
+  if (!voiceRun.current) voiceRun.current = createVoiceRun();
+  const [voiceStatus, setVoiceStatus] = useState4({ transcribing: null, note: null });
+  const voiceSession = {
+    next: voiceRun.current.next,
+    isCurrent: voiceRun.current.isCurrent,
+    addTranscript: (id, text) => {
+      const r = voiceRun.current.add(summaryRef.current, id, text);
+      if (r.truncated) message2.warning(`The voice note was cut to fit the ${SUMMARY_MAX_LENGTH.toLocaleString("en-US")}-character limit of "What happened?".`);
+      if (!r.added) return false;
+      summaryRef.current = r.summary;
+      setSummary(r.summary);
+      return true;
+    },
+    status: voiceStatus,
+    setStatus: setVoiceStatus
+  };
   const screenRec = useMediaRecorder({ kind: "screen", maxMs: 2 * 60 * 1e3 });
   const closeAnnotator = () => {
     if ((annotateTarget == null ? void 0 : annotateTarget.kind) === "file") URL.revokeObjectURL(annotateTarget.url);
     setAnnotateTarget(null);
   };
   const annotateFile = (index, file) => setAnnotateTarget({ kind: "file", index, file, url: URL.createObjectURL(file) });
-  const lastTargetRef = useRef3(null);
+  const lastTargetRef = useRef5(null);
   if (annotateTarget) lastTargetRef.current = annotateTarget;
   const shownTarget = annotateTarget || lastTargetRef.current;
   useEffect6(() => () => {
@@ -2053,12 +2433,19 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     setLastError(null);
     setFailedUploads([]);
     setProblem(null);
+    voiceRun.current.clear();
+    setVoiceStatus({ transcribing: null, note: null });
     autoShotDone.current = false;
   }, [shot]);
   const handleClose = () => {
     setProblem(null);
     onClose();
   };
+  useEffect6(() => {
+    if (open) return;
+    voiceRun.current.clear();
+    setVoiceStatus({ transcribing: null, note: null });
+  }, [open]);
   const retakeExact = async () => {
     endPendingPick();
     setHidden(true);
@@ -2261,7 +2648,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
         failedAttachments: failedUploads,
         browser,
         viewport,
-        form: { kind, severity, summary, expected, steps, transcript: voice == null ? void 0 : voice.transcript, shot, voice, screen, files, element: picked == null ? void 0 : picked.description }
+        form: { kind, severity, summary, expected, steps, shot, voice, screen, files, element: picked == null ? void 0 : picked.description }
       })
     });
   };
@@ -2333,7 +2720,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     ] }),
     done.warnings.map((w) => /* @__PURE__ */ jsx5(Alert2, { type: "warning", showIcon: true, message: w, style: { borderRadius: 8, textAlign: "left" } }, w)),
     done.warnings.length > 0 && problemLink,
-    /* @__PURE__ */ jsxs4(Space3, { children: [
+    /* @__PURE__ */ jsxs4(Space2, { children: [
       done.ticketKey && /* @__PURE__ */ jsxs4(Button4, { type: "primary", onClick: () => {
         onOpenTicket == null ? void 0 : onOpenTicket(done.ticketKey);
         handleClose();
@@ -2355,13 +2742,16 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
       {
         autoFocus: true,
         value: summary,
-        onChange: (e) => setSummary(e.target.value),
+        onChange: (e) => {
+          voiceRun.current.edit(e.target.value);
+          setSummary(e.target.value);
+        },
         placeholder: typeof PROMPTS[kind] === "function" ? PROMPTS[kind](appName) : PROMPTS[kind],
         autoSize: { minRows: 3, maxRows: 8 },
-        maxLength: 2e4
+        maxLength: SUMMARY_MAX_LENGTH
       }
     ) }),
-    /* @__PURE__ */ jsx5(VoicePanel, { value: voice, onChange: setVoice, transcriptionAvailable }),
+    /* @__PURE__ */ jsx5(VoicePanel, { open, value: voice, onChange: setVoice, session: voiceSession, transcriptionAvailable }),
     kind === "bug" && /* @__PURE__ */ jsxs4("div", { children: [
       /* @__PURE__ */ jsx5("div", { className: "kf-section-label", children: "How bad is it?" }),
       /* @__PURE__ */ jsx5("div", { className: "kf-chips", children: SEVERITIES.map((s) => /* @__PURE__ */ jsx5(Chip, { active: severity === s.key, cls: s.key, onClick: () => setSeverity(s.key), children: s.label }, s.key)) })
@@ -2374,7 +2764,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
         items: [{
           key: "more",
           label: /* @__PURE__ */ jsx5(Text3, { type: "secondary", style: { fontSize: 12.5 }, children: "More detail (optional)" }),
-          children: /* @__PURE__ */ jsxs4(Space3, { direction: "vertical", style: { width: "100%" }, size: 8, children: [
+          children: /* @__PURE__ */ jsxs4(Space2, { direction: "vertical", style: { width: "100%" }, size: 8, children: [
             kind !== "question" && /* @__PURE__ */ jsx5(TextArea, { value: expected, onChange: (e) => setExpected(e.target.value), placeholder: kind === "bug" ? "What did you expect to happen?" : "Why would this help?", autoSize: { minRows: 2, maxRows: 5 } }),
             kind === "bug" && /* @__PURE__ */ jsx5(TextArea, { value: steps, onChange: (e) => setSteps(e.target.value), placeholder: "Steps to make it happen again, if you know them\n1. \u2026\n2. \u2026", autoSize: { minRows: 2, maxRows: 6 } })
           ] })
@@ -2401,7 +2791,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
               setShot(null);
             } }) })
           ] })
-        ] }) : /* @__PURE__ */ jsxs4(Space3, { wrap: true, children: [
+        ] }) : /* @__PURE__ */ jsxs4(Space2, { wrap: true, children: [
           /* @__PURE__ */ jsx5(Button4, { size: "small", icon: /* @__PURE__ */ jsx5(CameraOutlined, {}), loading: capturing, onClick: retakeQuick, children: "Take screenshot" }),
           desktop && supportsExactCapture() && /* @__PURE__ */ jsx5(Button4, { size: "small", onClick: retakeExact, loading: capturing, children: "Exact pixels\u2026" }),
           offer.placement === "actions" && pickButton
@@ -2417,7 +2807,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
           /* @__PURE__ */ jsx5(PaperClipOutlined, {}),
           " Recording & files"
         ] }) }),
-        /* @__PURE__ */ jsxs4(Space3, { wrap: true, children: [
+        /* @__PURE__ */ jsxs4(Space2, { wrap: true, children: [
           desktop && supportsExactCapture() && !screen && /* @__PURE__ */ jsx5(Button4, { size: "small", icon: /* @__PURE__ */ jsx5(VideoCameraOutlined, {}), loading: screenRec.status === "requesting", onClick: startScreenRecording, children: "Record screen" }),
           /* @__PURE__ */ jsx5(Upload, { multiple: true, showUploadList: false, beforeUpload: (f, list) => {
             if (!list.length || f === list[0]) addFiles(list.length ? list : [f]);
@@ -2468,7 +2858,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
       /* @__PURE__ */ jsx5("span", { className: "kf-sep", children: "\xB7" }),
       problemLink
     ] }),
-    /* @__PURE__ */ jsxs4(Space3, { children: [
+    /* @__PURE__ */ jsxs4(Space2, { children: [
       progress && /* @__PURE__ */ jsxs4(Text3, { type: "secondary", style: { fontSize: 12 }, children: [
         /* @__PURE__ */ jsx5(LoadingOutlined2, {}),
         " ",
@@ -2530,7 +2920,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     ] }) }),
     /* @__PURE__ */ jsxs4("div", { className: "kf-footer", children: [
       /* @__PURE__ */ jsx5("span", {}),
-      /* @__PURE__ */ jsxs4(Space3, { children: [
+      /* @__PURE__ */ jsxs4(Space2, { children: [
         /* @__PURE__ */ jsx5(Button4, { onClick: () => setProblem(null), disabled: problem.status === "sending", children: "Back to my report" }),
         problem.status !== "sent" && /* @__PURE__ */ jsx5(Button4, { type: "primary", onClick: sendProblem, loading: problem.status === "sending", children: problem.status === "failed" ? "Try again" : "Send" })
       ] })
@@ -2542,6 +2932,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
       {
         open,
         onCancel: handleClose,
+        afterClose: reset,
         footer: null,
         width: 720,
         centered: true,
@@ -2556,7 +2947,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
         children: [
           /* @__PURE__ */ jsxs4("div", { className: "kf-head", children: [
             /* @__PURE__ */ jsx5("div", { children: /* @__PURE__ */ jsx5("h3", { children: problem ? "Problem with this form" : "Report a bug or share an idea" }) }),
-            /* @__PURE__ */ jsxs4(Space3, { children: [
+            /* @__PURE__ */ jsxs4(Space2, { children: [
               !problem && /* @__PURE__ */ jsx5(
                 Tabs,
                 {
@@ -2641,7 +3032,7 @@ function openFeedback(prefill) {
 var GAP = 22;
 var PANELS = ".ant-drawer-content-wrapper, .ant-modal-wrap:not(.kids-feedback-modal-wrap):not(.kids-feedback-annotator-wrap) .ant-modal-content";
 function useAvoidOverlays(ref) {
-  const [pos, setPos] = useState6(null);
+  const [pos, setPos] = useState5(null);
   useEffect7(() => {
     let frame = 0;
     const measure = () => {
@@ -2685,11 +3076,11 @@ function useAvoidOverlays(ref) {
 }
 var stop = (e) => e.stopPropagation();
 function FeedbackWidget({ onOpenTicket, hideButton = false, config }) {
-  const [open, setOpen] = useState6(false);
-  const [hidden, setHidden] = useState6(false);
-  const [prefill, setPrefill] = useState6(null);
-  const [mounted, setMounted] = useState6(false);
-  const rootRef = useRef4(null);
+  const [open, setOpen] = useState5(false);
+  const [hidden, setHidden] = useState5(false);
+  const [prefill, setPrefill] = useState5(null);
+  const [mounted, setMounted] = useState5(false);
+  const rootRef = useRef6(null);
   const pos = useAvoidOverlays(rootRef);
   useEffect7(() => {
     setMounted(true);

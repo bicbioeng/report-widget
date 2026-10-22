@@ -1,6 +1,8 @@
 /**
  * KIDS REST transport — a port of reads-bicbioeng-kids src/utils/feedbackApi.js
  * (+ http.js request() and agileApi.js uploadAttachment()). Returns ticketKey.
+ * updateFeedbackState / updateTicketAssignee use the fallback routes the
+ * widget was specified with (PATCH /feedback/:id/state, PATCH /agile/tickets/:key).
  *
  *   createKidsTransport({
  *     baseUrl,          // KIDS REST base, e.g. import.meta.env.VITE_REST_API_URL
@@ -74,6 +76,16 @@ export function createKidsTransport({ baseUrl, getAuthHeaders, onError } = {}) {
 
     fetchMyFeedback() {
       return request('/feedback/mine', { silent: true });
+    },
+
+    /** Staff: move a report to another triage state. Toasts and rejects on failure. */
+    updateFeedbackState(id, state) {
+      return request(`/feedback/${id}/state`, { method: 'PATCH', body: { state } });
+    },
+
+    /** Staff: (un)assign the report's ticket; assigneeId null unassigns. Toasts and rejects on failure. */
+    updateTicketAssignee(ticketKey, assigneeId) {
+      return request(`/agile/tickets/${encodeURIComponent(ticketKey)}`, { method: 'PATCH', body: { assigneeId: assigneeId ?? null } });
     },
 
     /** Audio → text. Resolves { text, provider } or { unavailable: true }. */
