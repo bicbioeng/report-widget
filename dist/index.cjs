@@ -1076,6 +1076,7 @@ var STATE_LABELS = { new: "New", acknowledged: "Acknowledged", in_progress: "In 
 var KIND_LABELS = { bug: "Bug", idea: "Idea", question: "Question", "report-tool": "Report tool" };
 var UNASSIGNED = "unassigned";
 var NO_PROJECT = "no-project";
+var NO_FILTERS = { status: void 0, project: void 0, assignee: void 0, kind: void 0 };
 function readAssignee(v) {
   var _a;
   if (!v) return null;
@@ -1277,7 +1278,6 @@ function relTime(iso) {
 }
 var STATUS_OPTIONS = Object.keys(STATE_LABELS).map((st) => ({ value: st, label: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(StatusLabel, { state: st }) }));
 var UNASSIGN = "__unassigned";
-var NO_FILTERS = { status: void 0, project: void 0, assignee: void 0, kind: void 0 };
 var small = { size: "small", popupMatchSelectWidth: false };
 function MyReports({ onOpenTicket, refreshKey, canEdit, members }) {
   const { transport, myReports } = useReportConfig();
@@ -2144,7 +2144,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.14.0";
+var WIDGET_VERSION = "1.15.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT2 = 280;

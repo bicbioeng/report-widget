@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Empty, Skeleton, Typography, Button, Select } from 'antd';
 import { useReportConfig } from './ReportProvider';
-import { STATE_LABELS, KIND_LABELS, assigneeOf, assigneeLabel, assigneeMemberId, projectOf, filterOptions, filterReports, editCapability, createReportStore } from './reportFilters';
+import { STATE_LABELS, KIND_LABELS, assigneeOf, assigneeLabel, assigneeMemberId, projectOf, filterOptions, filterReports, editCapability, createReportStore, NO_FILTERS } from './reportFilters';
 
 export { STATE_LABELS, KIND_LABELS };
 
@@ -41,7 +41,6 @@ export function relTime(iso) {
 
 const STATUS_OPTIONS = Object.keys(STATE_LABELS).map((st) => ({ value: st, label: <StatusLabel state={st} /> }));
 const UNASSIGN = '__unassigned';
-const NO_FILTERS = { status: undefined, project: undefined, assignee: undefined, kind: undefined };
 
 // Popups stay in antd's body portal (no getPopupContainer): the row's hover transform would clip them.
 const small = { size: 'small', popupMatchSelectWidth: false };

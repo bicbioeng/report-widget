@@ -9,6 +9,8 @@ export const KIND_LABELS = { bug: 'Bug', idea: 'Idea', question: 'Question', 're
 export const UNASSIGNED = 'unassigned';
 /** Filter value for reports with no project. */
 export const NO_PROJECT = 'no-project';
+/** Every filter cleared: the starting state and what 'Clear filters' sets. */
+export const NO_FILTERS = { status: undefined, project: undefined, assignee: undefined, kind: undefined };
 
 function readAssignee(v) {
   if (!v) return null;

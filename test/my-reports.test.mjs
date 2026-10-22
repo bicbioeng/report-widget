@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  assigneeOf, assigneeLabel, assigneeMemberId, filterOptions, filterReports, editCapability, createReportStore, projectOf, NO_PROJECT, STATE_LABELS, KIND_LABELS,
+  assigneeOf, assigneeLabel, assigneeMemberId, filterOptions, filterReports, editCapability, createReportStore, projectOf, NO_PROJECT, NO_FILTERS, STATE_LABELS, KIND_LABELS,
 } from '../src/reportFilters.js';
 import { createKidsTransport } from '../src/adapters/kids.js';
 
@@ -400,4 +400,58 @@ test('My reports: a status edit the fake transport rejects goes back to the prev
   assert.deepEqual(transport.calls, [['state', 3, 'done']]);
   assert.equal(row(store, 3).triageState, 'new');
   assert.deepEqual(ids(filterReports(store.items, { status: 'done' })), [4]);
+});
+
+// BNFR-239: the My reports tab as BNFR's QA saw it — no canEdit, so the list is read-only.
+const bnfrReports = () => [
+  { id: 1, kind: 'bug', triageState: 'new', summary: 'Upload button does nothing', ticketKey: 'BNFR-301', assignee: { id: 'a', name: 'Alice Adams' } },
+  { id: 2, kind: 'bug', triageState: 'in_progress', summary: 'Chart axis cut off', ticketKey: 'BNFR-302', assignee: { id: 'b', name: 'Bob Brown' } },
+  { id: 3, kind: 'idea', triageState: 'done', summary: 'Dark mode', ticketKey: 'BNFR-303', assignee: { id: 'a', name: 'Alice Adams' } },
+  { id: 4, kind: 'bug', triageState: 'new', summary: 'Typo on login page', ticketKey: 'BNFR-304', ticket: { assignee: null } },
+];
+const bnfrMembers = [{ id: 'a', name: 'Alice Adams' }, { id: 'b', name: 'Bob Brown' }];
+const bnfrTransport = () => ({
+  fetchMyFeedback: async () => ({ items: bnfrReports() }),
+  updateFeedbackState: async () => { throw new Error('no edits without canEdit'); },
+  updateTicketAssignee: async () => { throw new Error('no edits without canEdit'); },
+});
+async function bnfrLoaded() {
+  const transport = bnfrTransport();
+  const store = createReportStore();
+  await store.load(() => transport.fetchMyFeedback());
+  return { store, transport };
+}
+const optionValue = (items, filters, label) => filterOptions(items, filters).assignee.find((o) => o.label === label).value;
+
+test("BNFR-239 My reports: every row shows its assignee's name or 'Unassigned'", async () => {
+  const { store } = await bnfrLoaded();
+  const rows = filterReports(store.items, NO_FILTERS);
+  assert.deepEqual(ids(rows), [1, 2, 3, 4]);
+  assert.deepEqual(rows.map(assigneeLabel), ['Alice Adams', 'Bob Brown', 'Alice Adams', 'Unassigned']);
+});
+
+test('BNFR-239 My reports: Status=New leaves only New rows, adding Assignee=Unassigned leaves the unassigned row', async () => {
+  const { store } = await bnfrLoaded();
+  const byStatus = filterReports(store.items, { ...NO_FILTERS, status: 'new' });
+  assert.deepEqual(ids(byStatus), [1, 4]);
+  assert.ok(byStatus.every((r) => STATE_LABELS[r.triageState] === 'New'));
+  const unassigned = optionValue(store.items, { status: 'new' }, 'Unassigned');
+  const both = filterReports(store.items, { ...NO_FILTERS, status: 'new', assignee: unassigned });
+  assert.deepEqual(both.map((r) => [r.id, assigneeLabel(r)]), [[4, 'Unassigned']]);
+});
+
+test("BNFR-239 My reports: Status=New with Assignee=Bob Brown matches nothing, and Clear filters brings every row back", async () => {
+  const { store } = await bnfrLoaded();
+  const bob = optionValue(store.items, { status: 'new' }, 'Bob Brown');
+  // No rows is when the tab shows 'No reports match' with a 'Clear filters' button.
+  assert.deepEqual(filterReports(store.items, { ...NO_FILTERS, status: 'new', assignee: bob }), []);
+  // 'Clear filters' resets to NO_FILTERS: no filter set at all.
+  assert.ok(Object.values(NO_FILTERS).every((v) => v === undefined));
+  assert.deepEqual(ids(filterReports(store.items, NO_FILTERS)), [1, 2, 3, 4]);
+});
+
+test('BNFR-239 My reports: without canEdit no row gets a status or assignee edit select', async () => {
+  const { transport } = await bnfrLoaded();
+  assert.deepEqual(editCapability({ members: bnfrMembers, transport }), { status: false, assignee: false });
+  assert.deepEqual(editCapability({ canEdit: undefined, members: bnfrMembers, transport }), { status: false, assignee: false });
 });
