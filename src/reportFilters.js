@@ -7,6 +7,8 @@ export const KIND_LABELS = { bug: 'Bug', idea: 'Idea', question: 'Question', 're
 
 /** Filter value for reports nobody is assigned to. */
 export const UNASSIGNED = 'unassigned';
+/** Filter value for reports with no project. */
+export const NO_PROJECT = 'no-project';
 
 function readAssignee(v) {
   if (!v) return null;
@@ -38,7 +40,25 @@ export function assigneeMemberId(assignee, members) {
   return named.length === 1 ? named[0].id : undefined;
 }
 
+function readProject(v) {
+  if (!v) return null;
+  if (typeof v === 'string') return v;
+  if (typeof v !== 'object') return null;
+  const p = v.key || v.prefix || v.name;
+  return p ? String(p) : null;
+}
+
+/** report.project (string or { key | prefix | name }), else ticket.project, else the ticket key's prefix, else null. */
+export function projectOf(report) {
+  const p = readProject(report?.project) || readProject(report?.ticket?.project);
+  if (p) return p;
+  const key = typeof report?.ticketKey === 'string' ? report.ticketKey : '';
+  const dash = key.lastIndexOf('-');
+  return dash > 0 ? key.slice(0, dash) : null;
+}
+
 const assigneeKey =(report) => assigneeOf(report)?.name ?? UNASSIGNED;
+const projectKey = (report) => projectOf(report) ?? NO_PROJECT;
 
 const stateLabel = (s) => STATE_LABELS[s] || s;
 const kindLabel = (k) => KIND_LABELS[k] || k;
@@ -49,7 +69,7 @@ const byState = (a, b) => {
 };
 
 /**
- * Options for the three filters, drawn from what the items hold. A selected
+ * Options for the four filters, drawn from what the items hold. A selected
  * value no item has any more (after an edit) stays listed, so the Select
  * keeps its readable label instead of a raw key.
  */
@@ -58,7 +78,10 @@ export function filterOptions(items, selected = {}) {
   const states = new Set(list.map((r) => r.triageState).filter(Boolean));
   const kinds = new Set(list.map((r) => r.kind).filter(Boolean));
   const names = new Set(list.map((r) => assigneeOf(r)?.name).filter(Boolean));
+  const projects = new Set(list.map(projectOf).filter(Boolean));
+  const noProject = list.some((r) => !projectOf(r)) || selected.project === NO_PROJECT;
   if (selected.status) states.add(selected.status);
+  if (selected.project && selected.project !== NO_PROJECT) projects.add(selected.project);
   if (selected.kind) kinds.add(selected.kind);
   if (selected.assignee && selected.assignee !== UNASSIGNED) names.add(selected.assignee);
   return {
@@ -68,14 +91,19 @@ export function filterOptions(items, selected = {}) {
       ...[...names].sort((a, b) => a.localeCompare(b)).map((n) => ({ value: n, label: n })),
     ],
     kind: [...kinds].map((k) => ({ value: k, label: kindLabel(k) })),
+    project: [
+      ...[...projects].sort((a, b) => a.localeCompare(b)).map((p) => ({ value: p, label: p })),
+      ...(noProject ? [{ value: NO_PROJECT, label: 'No project' }] : []),
+    ],
   };
 }
 
 /** Empty filters mean 'all'; set ones combine with AND. */
-export function filterReports(items, { status, assignee, kind } = {}) {
+export function filterReports(items, { status, assignee, kind, project } = {}) {
   return (items || []).filter((r) => (!status || r.triageState === status)
     && (!kind || r.kind === kind)
-    && (!assignee || assigneeKey(r) === assignee));
+    && (!assignee || assigneeKey(r) === assignee)
+    && (!project || projectKey(r) === project));
 }
 
 /** Which row controls the host allows. The Assignee control also needs a ticketKey on the row. */
