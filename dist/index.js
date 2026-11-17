@@ -1776,108 +1776,6 @@ function pickSummary(d) {
   const name = nameOf(d);
   return name ? `${d.selector} \u201C${name}\u201D` : d.selector;
 }
-function chipLabel(d) {
-  return `Element: ${elementName(d)}`;
-}
-function outlineRect(rect, { imageWidth, imageHeight, viewportWidth }) {
-  const k = viewportWidth > 0 ? imageWidth / viewportWidth : 1;
-  const clamp2 = (v, max) => Math.min(max, Math.max(0, Math.round(v)));
-  const x = clamp2(rect.x * k, imageWidth);
-  const y = clamp2(rect.y * k, imageHeight);
-  const width = clamp2((rect.x + rect.width) * k, imageWidth) - x;
-  const height = clamp2((rect.y + rect.height) * k, imageHeight) - y;
-  return width > 0 && height > 0 ? { x, y, width, height } : null;
-}
-var OUTLINE_WAIT_MS = 1e3;
-var PICK_SHOT_WAIT_MS = 1200;
-function within(promise, ms, fallback = null) {
-  return new Promise((resolve) => {
-    const t = setTimeout(() => resolve(fallback), ms);
-    Promise.resolve(promise).then(
-      (v) => {
-        clearTimeout(t);
-        resolve(v);
-      },
-      () => {
-        clearTimeout(t);
-        resolve(fallback);
-      }
-    );
-  });
-}
-async function drawOutline(shot, rect, viewportWidth = window.innerWidth, { waitMs = OUTLINE_WAIT_MS } = {}) {
-  var _a, _b, _c;
-  const original = { blob: shot.blob, width: shot.width, height: shot.height };
-  let img;
-  try {
-    img = await within(typeof createImageBitmap === "function" ? createImageBitmap(shot.blob) : loadImage(shot.blob), waitMs);
-  } catch {
-    img = null;
-  }
-  const w = (img == null ? void 0 : img.naturalWidth) || (img == null ? void 0 : img.width);
-  const h = (img == null ? void 0 : img.naturalHeight) || (img == null ? void 0 : img.height);
-  if (!w || !h) return original;
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = (_a = canvas.getContext) == null ? void 0 : _a.call(canvas, "2d");
-  if (!ctx) {
-    (_b = img.close) == null ? void 0 : _b.call(img);
-    return original;
-  }
-  ctx.drawImage(img, 0, 0);
-  (_c = img.close) == null ? void 0 : _c.call(img);
-  const r = outlineRect(rect, { imageWidth: canvas.width, imageHeight: canvas.height, viewportWidth });
-  if (r) {
-    const k = viewportWidth > 0 ? canvas.width / viewportWidth : 1;
-    const lw = 3 * k;
-    const x0 = Math.max(lw / 2 + k, r.x - lw / 2);
-    const y0 = Math.max(lw / 2 + k, r.y - lw / 2);
-    const x1 = Math.min(canvas.width - lw / 2 - k, r.x + r.width + lw / 2);
-    const y1 = Math.min(canvas.height - lw / 2 - k, r.y + r.height + lw / 2);
-    ctx.lineJoin = "round";
-    ctx.strokeStyle = "#FFFFFF";
-    ctx.lineWidth = lw + 2 * k;
-    ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
-    ctx.strokeStyle = "#6B63D9";
-    ctx.lineWidth = lw;
-    ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
-  }
-  const blob = await within(new Promise((resolve) => canvas.toBlob(resolve, "image/png")), waitMs);
-  return blob ? { blob, width: canvas.width, height: canvas.height } : original;
-}
-function shotAfterPick({
-  capture,
-  outline = drawOutline,
-  rect,
-  viewportWidth,
-  signal,
-  waitMs = PICK_SHOT_WAIT_MS
-}) {
-  const late = (async () => {
-    const r = await capture();
-    if (!(r == null ? void 0 : r.blob)) return null;
-    const outlined = await outline(r, rect, viewportWidth);
-    return (outlined == null ? void 0 : outlined.blob) ? { ...r, ...outlined } : r;
-  })().then(
-    (shot) => ({ shot: (signal == null ? void 0 : signal.aborted) ? null : shot, error: null }),
-    (error) => ({ shot: null, error: (signal == null ? void 0 : signal.aborted) ? null : error })
-  );
-  return new Promise((resolve) => {
-    var _a;
-    const done = (res) => {
-      var _a2;
-      clearTimeout(t);
-      (_a2 = signal == null ? void 0 : signal.removeEventListener) == null ? void 0 : _a2.call(signal, "abort", onAbort);
-      resolve({ produced: Boolean(res == null ? void 0 : res.shot), shot: (res == null ? void 0 : res.shot) || null, error: (res == null ? void 0 : res.error) || null, late });
-    };
-    const onAbort = () => done(null);
-    const t = setTimeout(() => done(null), waitMs);
-    (_a = signal == null ? void 0 : signal.addEventListener) == null ? void 0 : _a.call(signal, "abort", onAbort);
-    if (signal == null ? void 0 : signal.aborted) done(null);
-    else late.then(done);
-  });
-}
 var overlaps = (a, b) => a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 var isWithin = (node, ancestor) => {
   for (let n = node; n; n = n.parentElement || n.parentNode) if (n === ancestor) return true;
@@ -1918,7 +1816,9 @@ function startElementPick({
   signal,
   doc = document,
   win = window,
-  getRect = (e) => e.getBoundingClientRect()
+  getRect = (e) => e.getBoundingClientRect(),
+  hint: hintText = null,
+  cancelText = "Cancel"
 } = {}) {
   return new Promise((resolve) => {
     var _a, _b, _c, _d;
@@ -1935,10 +1835,10 @@ function startElementPick({
     banner.setAttribute("aria-live", "polite");
     const hint = make("span", "kf-picker-hint");
     const touch = Boolean((_b = (_a = win.matchMedia) == null ? void 0 : _a.call(win, "(hover: none) and (pointer: coarse)")) == null ? void 0 : _b.matches);
-    hint.textContent = touch ? "Tap an element to attach it" : "Click an element to attach it \xB7 Esc to cancel";
+    hint.textContent = hintText || (touch ? "Tap an element to attach it" : "Click an element to attach it \xB7 Esc to cancel");
     const cancel = make("button", "kf-picker-cancel");
     cancel.type = "button";
-    cancel.textContent = "Cancel";
+    cancel.textContent = cancelText;
     banner.appendChild(hint);
     banner.appendChild(cancel);
     const frames = make("style", "");
@@ -2008,7 +1908,7 @@ function startElementPick({
         return;
       }
       const el = targetOf(e);
-      if (el) finish({ element: el, description: describeElement(el, { getRect }) });
+      if (el) finish({ element: el, description: describeElement(el, { getRect }), point: { x: Math.round(e.clientX), y: Math.round(e.clientY) } });
     };
     const onKey = (e) => {
       if (e.key !== "Escape" && e.key !== "Esc") return;
@@ -2049,6 +1949,206 @@ function startElementPick({
     };
     if (signal == null ? void 0 : signal.aborted) finish(null);
   });
+}
+
+// src/pins.js
+var NOTE_MAX = 2e3;
+var MARK = "#6B63D9";
+function pinsText(pins) {
+  return (pins || []).map((p) => `${p.n}. On ${elementName(p.element || { tag: "page" })}: ${String(p.note || "").trim()}`).join("\n");
+}
+function pinSummary(summary, pins) {
+  const own = String(summary || "").trim();
+  if (!(pins == null ? void 0 : pins.length)) return own;
+  const list = pinsText(pins);
+  return own ? `${own}
+
+Pinned notes:
+${list}` : list;
+}
+function pinPayload(pins) {
+  return (pins || []).map(({ n, note, point, scroll, element }) => ({ n, note, point, scroll, element: element || null }));
+}
+function pinMarks(pins, { imageWidth, imageHeight, viewportWidth, scroll = { x: 0, y: 0 } }) {
+  const k = viewportWidth > 0 ? imageWidth / viewportWidth : 1;
+  return (pins || []).map((p) => {
+    var _a, _b;
+    return {
+      n: p.n,
+      x: Math.round((p.point.x + (((_a = p.scroll) == null ? void 0 : _a.x) || 0) - (scroll.x || 0)) * k),
+      y: Math.round((p.point.y + (((_b = p.scroll) == null ? void 0 : _b.y) || 0) - (scroll.y || 0)) * k),
+      r: Math.round(12 * k)
+    };
+  }).filter((m) => m.x >= 0 && m.y >= 0 && m.x <= imageWidth && m.y <= imageHeight);
+}
+async function drawPins(shot, pins, { viewportWidth = window.innerWidth, scroll = { x: window.scrollX, y: window.scrollY } } = {}) {
+  var _a, _b;
+  const original = { blob: shot.blob, width: shot.width, height: shot.height };
+  let img;
+  try {
+    img = typeof createImageBitmap === "function" ? await createImageBitmap(shot.blob) : await loadImage(shot.blob);
+  } catch {
+    return original;
+  }
+  const w = (img == null ? void 0 : img.naturalWidth) || (img == null ? void 0 : img.width);
+  const h = (img == null ? void 0 : img.naturalHeight) || (img == null ? void 0 : img.height);
+  if (!w || !h) return original;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = (_a = canvas.getContext) == null ? void 0 : _a.call(canvas, "2d");
+  if (!ctx) return original;
+  ctx.drawImage(img, 0, 0);
+  (_b = img.close) == null ? void 0 : _b.call(img);
+  for (const m of pinMarks(pins, { imageWidth: w, imageHeight: h, viewportWidth, scroll })) {
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, m.r + m.r / 6, 0, Math.PI * 2);
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+    ctx.fillStyle = MARK;
+    ctx.fill();
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = `700 ${Math.round(m.r * 1.15)}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(m.n), m.x, m.y + m.r / 12);
+  }
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  return blob ? { blob, width: w, height: h } : original;
+}
+function markerLayer(doc, win) {
+  const layer = doc.createElement("div");
+  layer.className = "kf-root kf-pin-layer";
+  doc.body.appendChild(layer);
+  const dots = /* @__PURE__ */ new Map();
+  return {
+    set(pins) {
+      for (const [n, d] of dots) if (!pins.some((p) => p.n === n)) {
+        d.remove();
+        dots.delete(n);
+      }
+      for (const p of pins) {
+        let d = dots.get(p.n);
+        if (!d) {
+          d = doc.createElement("div");
+          d.className = "kf-pin-dot";
+          layer.appendChild(d);
+          dots.set(p.n, d);
+        }
+        d.textContent = String(p.n);
+        d.style.left = `${p.point.x + p.scroll.x}px`;
+        d.style.top = `${p.point.y + p.scroll.y}px`;
+        d.title = p.note;
+      }
+    },
+    remove() {
+      layer.remove();
+    },
+    win
+  };
+}
+function askNote({ n, label, at, doc = document, win = window, signal }) {
+  return new Promise((resolve) => {
+    var _a;
+    const root = doc.createElement("div");
+    root.className = "kf-root kf-note-layer";
+    const box = doc.createElement("div");
+    box.className = "kf-note";
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-label", `Note for pin ${n}`);
+    const head = doc.createElement("div");
+    head.className = "kf-note-head";
+    head.textContent = `${n} \xB7 ${label}`;
+    const ta = doc.createElement("textarea");
+    ta.rows = 3;
+    ta.maxLength = NOTE_MAX;
+    ta.placeholder = "What is wrong or what should change here?";
+    ta.setAttribute("aria-label", "Note");
+    const row = doc.createElement("div");
+    row.className = "kf-note-row";
+    const hint = doc.createElement("span");
+    hint.textContent = "Enter to pin \xB7 Esc to skip";
+    const skip = doc.createElement("button");
+    skip.type = "button";
+    skip.className = "kf-note-skip";
+    skip.textContent = "Skip";
+    const save = doc.createElement("button");
+    save.type = "button";
+    save.className = "kf-note-save";
+    save.textContent = "Pin note";
+    row.append(hint, skip, save);
+    box.append(head, ta, row);
+    root.appendChild(box);
+    doc.body.appendChild(root);
+    const vw = win.innerWidth || 1024;
+    const vh = win.innerHeight || 768;
+    const bw = Math.min(320, vw - 16);
+    box.style.width = `${bw}px`;
+    box.style.left = `${Math.max(8, Math.min(at.x + 16, vw - bw - 8))}px`;
+    box.style.top = `${Math.max(8, Math.min(at.y + 16, vh - 170))}px`;
+    setTimeout(() => ta.focus(), 0);
+    let finish;
+    const onKey = (e) => {
+      var _a2;
+      if (e.key === "Escape" || e.key === "Esc") {
+        e.preventDefault();
+        e.stopPropagation();
+        (_a2 = e.stopImmediatePropagation) == null ? void 0 : _a2.call(e);
+        finish(null);
+      } else if (e.key === "Enter" && !e.shiftKey && doc.activeElement === ta) {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(ta.value);
+      }
+    };
+    const onAbort = () => finish(null);
+    win.addEventListener("keydown", onKey, true);
+    (_a = signal == null ? void 0 : signal.addEventListener) == null ? void 0 : _a.call(signal, "abort", onAbort);
+    root.addEventListener("click", (e) => {
+      if (e.target === root) finish(ta.value);
+    });
+    skip.addEventListener("click", () => finish(null));
+    save.addEventListener("click", () => finish(ta.value));
+    finish = (value) => {
+      var _a2;
+      win.removeEventListener("keydown", onKey, true);
+      (_a2 = signal == null ? void 0 : signal.removeEventListener) == null ? void 0 : _a2.call(signal, "abort", onAbort);
+      root.remove();
+      finish = () => {
+      };
+      const note = String(value || "").trim();
+      resolve(note || null);
+    };
+    if (signal == null ? void 0 : signal.aborted) finish(null);
+  });
+}
+async function pinSession({ pins = [], signal, doc = document, win = window } = {}) {
+  var _a, _b;
+  const list = [...pins];
+  const marks = markerLayer(doc, win);
+  marks.set(list);
+  try {
+    for (; ; ) {
+      const next = list.reduce((m, p) => Math.max(m, p.n), 0) + 1;
+      const touch = Boolean((_b = (_a = win.matchMedia) == null ? void 0 : _a.call(win, "(hover: none) and (pointer: coarse)")) == null ? void 0 : _b.matches);
+      const hint = `${touch ? "Tap" : "Click"} where your note goes${list.length ? ` \xB7 ${list.length} pinned` : ""}${touch ? "" : " \xB7 Esc when done"}`;
+      const picked = await startElementPick({ signal, doc, win, hint, cancelText: "Done" });
+      if (!picked || (signal == null ? void 0 : signal.aborted)) break;
+      const at = picked.point || { x: picked.description.rect.x, y: picked.description.rect.y };
+      const scroll = { x: win.scrollX || 0, y: win.scrollY || 0 };
+      const draft = { n: next, note: "", point: at, scroll, element: picked.description };
+      marks.set([...list, draft]);
+      const note = await askNote({ n: next, label: elementName(picked.description), at, doc, win, signal });
+      if (signal == null ? void 0 : signal.aborted) break;
+      if (note) list.push({ ...draft, note });
+      marks.set(list);
+    }
+  } finally {
+    marks.remove();
+  }
+  return list;
 }
 
 // src/metadata.js
@@ -2105,7 +2205,7 @@ function pageMetadata({ buildSha = "dev", getImpersonation } = {}) {
 }
 
 // src/diagnostics.js
-var WIDGET_VERSION = "1.15.0";
+var WIDGET_VERSION = "1.16.0";
 var REPORT_TOOL_KIND = "report-tool";
 var REPORT_TOOL_PREFIX = "Report tool: ";
 var MAX_TEXT2 = 280;
@@ -2280,11 +2380,12 @@ function createVoiceRun() {
     }
   };
 }
-function feedbackPayload({ kind, severity, summary, expected, steps, voice, picked, context, pageUrl, route }) {
+function feedbackPayload({ kind, severity, summary, expected, steps, voice, picked, pins = [], context, pageUrl, route }) {
   return {
     kind,
     severity: kind === "bug" ? severity : null,
-    summary: summary.trim(),
+    // Pinned notes ride in the summary too, so every server shows them as text.
+    summary: pinSummary(summary, pins),
     expected: expected.trim() || null,
     steps: steps.trim() || null,
     // The voice note's text is already in summary; the key stays for older consumers.
@@ -2292,7 +2393,7 @@ function feedbackPayload({ kind, severity, summary, expected, steps, voice, pick
     transcriptSource: (voice == null ? void 0 : voice.transcript) ? voice.transcriptSource || null : null,
     pageUrl,
     route,
-    context: { ...context, element: (picked == null ? void 0 : picked.description) || null }
+    context: { ...context, element: (picked == null ? void 0 : picked.description) || null, ...pins.length ? { pins: pinPayload(pins) } : {} }
   };
 }
 
@@ -2346,7 +2447,9 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
   const [shot, setShot] = useState4(null);
   const [annotateTarget, setAnnotateTarget] = useState4(null);
   const [capturing, setCapturing] = useState4(false);
-  const [picked, setPicked] = useState4(null);
+  const [pins, setPins] = useState4([]);
+  const pinBase = useRef5(null);
+  const picked = pins.length ? { description: pins[0].element } : null;
   const [voice, setVoice] = useState4(null);
   const [screen, setScreen] = useState4(null);
   const [files, setFiles] = useState4([]);
@@ -2454,7 +2557,8 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
   }, [screenRec.error]);
   const endPendingPick = () => {
     var _a2;
-    return (_a2 = pickAbort.current) == null ? void 0 : _a2.abort();
+    (_a2 = pickAbort.current) == null ? void 0 : _a2.abort();
+    pinBase.current = null;
   };
   const reset = useCallback3(() => {
     endPendingPick();
@@ -2465,7 +2569,8 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     setSteps("");
     if (shot == null ? void 0 : shot.url) URL.revokeObjectURL(shot.url);
     setShot(null);
-    setPicked(null);
+    setPins([]);
+    pinBase.current = null;
     setVoice(null);
     setScreen(null);
     setFiles([]);
@@ -2523,64 +2628,56 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
       setHidden(false);
     }
   };
-  const pickElement = async () => {
+  const applyShot = (next) => {
+    const url = URL.createObjectURL(next.blob);
+    setShot((prev) => {
+      if (prev == null ? void 0 : prev.url) URL.revokeObjectURL(prev.url);
+      return { ...next, url };
+    });
+  };
+  const redrawPins = async (list) => {
+    const base = pinBase.current;
+    if (!base) return;
+    const drawn = list.length ? await drawPins(base.shot, list, base) : base.shot;
+    applyShot({ ...base.shot, ...drawn, annotated: list.length > 0 });
+  };
+  const pinNotes = async () => {
     var _a2;
     (_a2 = pickAbort.current) == null ? void 0 : _a2.abort();
     const ctrl = new AbortController();
     pickAbort.current = ctrl;
     const { signal } = ctrl;
     let restoreLocks = null;
-    let late = null;
-    const applyShot = (next2) => {
-      const url = URL.createObjectURL(next2.blob);
-      setShot((prev) => {
-        if (prev == null ? void 0 : prev.url) URL.revokeObjectURL(prev.url);
-        return { ...next2, url };
-      });
-    };
-    const fail = (e) => {
-      message2.warning(e.message || "Screenshot failed.");
-      noteError("element-pick", e);
-    };
     setHidden(true);
     try {
-      await new Promise((r) => setTimeout(r, 120));
+      await new Promise((r2) => setTimeout(r2, 120));
       if (signal.aborted) return;
       const before = locksBeforeOpen.current || [];
       restoreLocks = suspendScrollLocks(scrollLockKeys().filter((k) => !before.includes(k)));
-      const result = await startElementPick({ signal });
-      if (!result || signal.aborted) return;
-      const { description } = result;
-      setPicked({ description });
+      const next = await pinSession({ pins, signal });
+      if (signal.aborted || next.length === pins.length) return;
+      setPins(next);
       setCapturing(true);
-      const res = await shotAfterPick({
-        capture: captureQuick,
-        outline: drawOutline,
-        rect: description.rect,
-        viewportWidth: window.innerWidth,
-        signal
-      });
-      if (signal.aborted) return;
-      if (res.error) throw res.error;
-      if (res.produced) applyShot(res.shot);
-      else late = res.late;
+      const r = await captureQuick();
+      if (signal.aborted || !(r == null ? void 0 : r.blob)) return;
+      pinBase.current = { shot: r, scroll: { x: window.scrollX, y: window.scrollY }, viewportWidth: window.innerWidth };
+      await redrawPins(next);
     } catch (e) {
       if (signal.aborted) return;
-      fail(e);
+      message2.warning(e.message || "Screenshot failed.");
+      noteError("pin-notes", e);
     } finally {
       restoreLocks == null ? void 0 : restoreLocks();
-      if (!late && pickAbort.current === ctrl) pickAbort.current = null;
+      if (pickAbort.current === ctrl) pickAbort.current = null;
       refocusPick.current = !signal.aborted;
       setCapturing(false);
       setHidden(false);
     }
-    if (!late) return;
-    const { shot: next, error } = await late;
-    const current = pickAbort.current === ctrl && !signal.aborted;
-    if (pickAbort.current === ctrl) pickAbort.current = null;
-    if (!current) return;
-    if (error) fail(error);
-    else if (next) applyShot(next);
+  };
+  const removePin = (p) => {
+    const next = pins.filter((x) => x !== p);
+    setPins(next);
+    redrawPins(next).catch((e) => noteError("pin-notes", e));
   };
   useEffect6(() => {
     var _a2;
@@ -2617,7 +2714,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     }
   };
   const context = useMemo2(() => open ? { ...meta(), ...snapshotContext() } : null, [open, done]);
-  const canSubmit = summary.trim().length > 0 && !submitting;
+  const canSubmit = (summary.trim().length > 0 || pins.length > 0) && !submitting;
   const submit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
@@ -2634,6 +2731,7 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
         steps,
         voice,
         picked,
+        pins,
         context: ctx,
         pageUrl: window.location.href,
         route: window.location.pathname
@@ -2743,14 +2841,15 @@ function FeedbackModal({ open, onClose, prefill, onOpenTicket, hidden, setHidden
     }, null, 2) })
   ] });
   const offer = pickOffer({ shot, picked, capturing, hidden });
-  const pickButton = /* @__PURE__ */ jsx5(Button4, { ref: pickRef, size: "small", icon: /* @__PURE__ */ jsx5(AimOutlined, {}), onClick: pickElement, disabled: offer.disabled, children: offer.label });
-  const pickedChip = offer.chip && /* @__PURE__ */ jsx5(Tooltip2, { title: picked.description.selector, children: /* @__PURE__ */ jsxs4("span", { className: "kf-file kf-pick-chip", children: [
-    /* @__PURE__ */ jsx5("span", { className: "kf-pick-name", children: chipLabel(picked.description) }),
-    /* @__PURE__ */ jsx5("button", { type: "button", onClick: () => {
-      endPendingPick();
-      setPicked(null);
-    }, "aria-label": "Remove picked element", children: /* @__PURE__ */ jsx5(CloseOutlined2, {}) })
-  ] }) });
+  const pickButton = /* @__PURE__ */ jsx5(Tooltip2, { title: "Click anywhere on the page and type a note there", children: /* @__PURE__ */ jsx5(Button4, { ref: pickRef, size: "small", type: pins.length ? "default" : "primary", icon: /* @__PURE__ */ jsx5(AimOutlined, {}), onClick: pinNotes, disabled: offer.disabled, children: pins.length ? "Add more notes" : "Point and comment" }) });
+  const pickedChip = pins.length > 0 && /* @__PURE__ */ jsx5("ol", { className: "kf-pin-list", "aria-label": "Pinned notes", children: pins.map((p) => /* @__PURE__ */ jsxs4("li", { children: [
+    /* @__PURE__ */ jsx5("span", { className: "kf-pin-n", children: p.n }),
+    /* @__PURE__ */ jsxs4("span", { className: "kf-pin-text", children: [
+      /* @__PURE__ */ jsx5("span", { className: "kf-pin-on", children: elementName(p.element) }),
+      p.note
+    ] }),
+    /* @__PURE__ */ jsx5("button", { type: "button", onClick: () => removePin(p), "aria-label": `Remove note ${p.n}`, children: /* @__PURE__ */ jsx5(CloseOutlined2, {}) })
+  ] }, p.n)) });
   const form = done ? /* @__PURE__ */ jsxs4("div", { className: "kf-success", children: [
     /* @__PURE__ */ jsx5(CheckCircleFilled, { style: { fontSize: 40, color: "#22c55e" } }),
     /* @__PURE__ */ jsx5("div", { className: "key", children: done.ticketKey }),

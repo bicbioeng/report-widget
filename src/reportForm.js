@@ -3,6 +3,8 @@
  * node --test can import it straight from src.
  */
 
+import { pinSummary, pinPayload } from './pins.js';
+
 /**
  * What the Screenshot card offers for element-pick. `placement` is 'actions'
  * (next to Take screenshot, no shot yet) or 'row' (the pick row under the shot).
@@ -142,11 +144,12 @@ export function createVoiceRun() {
 }
 
 /** The transport.submitFeedback payload. `context` is meta() + snapshotContext(). */
-export function feedbackPayload({ kind, severity, summary, expected, steps, voice, picked, context, pageUrl, route }) {
+export function feedbackPayload({ kind, severity, summary, expected, steps, voice, picked, pins = [], context, pageUrl, route }) {
   return {
     kind,
     severity: kind === 'bug' ? severity : null,
-    summary: summary.trim(),
+    // Pinned notes ride in the summary too, so every server shows them as text.
+    summary: pinSummary(summary, pins),
     expected: expected.trim() || null,
     steps: steps.trim() || null,
     // The voice note's text is already in summary; the key stays for older consumers.
@@ -154,6 +157,6 @@ export function feedbackPayload({ kind, severity, summary, expected, steps, voic
     transcriptSource: voice?.transcript ? voice.transcriptSource || null : null,
     pageUrl,
     route,
-    context: { ...context, element: picked?.description || null },
+    context: { ...context, element: picked?.description || null, ...(pins.length ? { pins: pinPayload(pins) } : {}) },
   };
 }

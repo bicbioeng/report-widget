@@ -24,8 +24,9 @@ import VoicePanel from './VoicePanel';
 import MyReports from './MyReports';
 import { captureQuick, captureExact, supportsExactCapture, blobToFile } from './capture';
 import {
-  startElementPick, drawOutline, shotAfterPick, chipLabel, pickSummary, scrollLockKeys, suspendScrollLocks,
+  pickSummary, elementName, scrollLockKeys, suspendScrollLocks,
 } from './elementPicker';
+import { pinSession, drawPins } from './pins';
 import { useMediaRecorder, formatMs, extensionFor } from './recorders';
 import { snapshotContext } from './contextBuffer';
 import { pageMetadata, isDesktop } from './metadata';
@@ -88,7 +89,10 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
   const [shot, setShot] = useState(null);       // { blob, url, width, height, method, annotated }
   const [annotateTarget, setAnnotateTarget] = useState(null); // null | { kind: 'shot' } | { kind: 'file', index, file, url }
   const [capturing, setCapturing] = useState(false);
-  const [picked, setPicked] = useState(null);   // { description } — see describeElement
+  const [pins, setPins] = useState([]);         // click-to-comment notes — see pins.js
+  const pinBase = useRef(null);                 // the un-pinned shot pins are drawn on: { shot, scroll, viewportWidth }
+  // The first pin's element is the report's context.element, as a single pick was.
+  const picked = pins.length ? { description: pins[0].element } : null;
   const [voice, setVoice] = useState(null);     // { blob, mimeType, durationMs, filename, transcript, transcriptSource }
   const [screen, setScreen] = useState(null);   // { blob, mimeType, durationMs, filename }
   const [files, setFiles] = useState([]);
@@ -208,13 +212,14 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
 
   // Drops a pick's late screenshot, so it cannot replace one taken, annotated or
   // removed since, or outline an element that is no longer picked.
-  const endPendingPick = () => pickAbort.current?.abort();
+  // Also: any other change to the screenshot means pins are no longer redrawn on it.
+  const endPendingPick = () => { pickAbort.current?.abort(); pinBase.current = null; };
 
   const reset = useCallback(() => {
     endPendingPick();
     setKind('bug'); setSeverity('annoying'); setSummary(''); setExpected(''); setSteps('');
     if (shot?.url) URL.revokeObjectURL(shot.url);
-    setShot(null); setPicked(null); setVoice(null); setScreen(null); setFiles([]); setDone(null); setProgress('');
+    setShot(null); setPins([]); pinBase.current = null; setVoice(null); setScreen(null); setFiles([]); setDone(null); setProgress('');
     setLastError(null); setFailedUploads([]); setProblem(null);
     voiceRun.current.clear(); setVoiceStatus({ transcribing: null, note: null });
     autoShotDone.current = false;
@@ -264,70 +269,62 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
     }
   };
 
-  // Pick one page element, then retake the quick screenshot with it outlined.
-  // On cancel the screenshot and any earlier pick stay as they were.
-  // The dialog comes back with the pick within PICK_SHOT_WAIT_MS even if the
-  // screenshot is still rendering; the outlined shot replaces the current one
-  // when it arrives. Closing or unmounting the dialog, picking again, or any
-  // other change to the screenshot (endPendingPick) aborts it, which takes the
-  // pick layer and its listeners off the page and drops the late screenshot.
-  const pickElement = async () => {
+  const applyShot = (next) => {
+    const url = URL.createObjectURL(next.blob);
+    setShot((prev) => {
+      if (prev?.url) URL.revokeObjectURL(prev.url);
+      return { ...next, url };
+    });
+  };
+  // Pins drawn on the shot they were made on, redrawn when one is removed.
+  const redrawPins = async (list) => {
+    const base = pinBase.current;
+    if (!base) return;
+    const drawn = list.length ? await drawPins(base.shot, list, base) : base.shot;
+    applyShot({ ...base.shot, ...drawn, annotated: list.length > 0 });
+  };
+
+  // Click-to-comment: the dialog hides, the reporter clicks anywhere and types a
+  // note at each spot, Esc or Done ends it. Then a fresh quick screenshot with
+  // the numbered pins drawn on it replaces the current one. Closing the dialog
+  // or starting again (endPendingPick) aborts the session and drops its notes.
+  const pinNotes = async () => {
     pickAbort.current?.abort();
     const ctrl = new AbortController();
     pickAbort.current = ctrl;
     const { signal } = ctrl;
     let restoreLocks = null;
-    let late = null;
-    const applyShot = (next) => {
-      const url = URL.createObjectURL(next.blob);
-      setShot((prev) => {
-        if (prev?.url) URL.revokeObjectURL(prev.url);
-        return { ...next, url };
-      });
-    };
-    const fail = (e) => {
-      message.warning(e.message || 'Screenshot failed.');
-      noteError('element-pick', e);
-    };
     setHidden(true);
     try {
       await new Promise((r) => setTimeout(r, 120));
       if (signal.aborted) return;
-      // The hidden dialog's scroll lock would stop a touch drag scrolling the page.
+      // The hidden dialog's scroll lock would stop the page scrolling while pinning.
       const before = locksBeforeOpen.current || [];
       restoreLocks = suspendScrollLocks(scrollLockKeys().filter((k) => !before.includes(k)));
-      const result = await startElementPick({ signal });
-      if (!result || signal.aborted) return;
-      const { description } = result;
-      setPicked({ description });
+      const next = await pinSession({ pins, signal });
+      if (signal.aborted || next.length === pins.length) return;
+      setPins(next);
       setCapturing(true);
-      const res = await shotAfterPick({
-        capture: captureQuick, outline: drawOutline, rect: description.rect, viewportWidth: window.innerWidth, signal,
-      });
-      if (signal.aborted) return;
-      if (res.error) throw res.error;
-      if (res.produced) applyShot(res.shot);
-      else late = res.late;
+      const r = await captureQuick();
+      if (signal.aborted || !r?.blob) return;
+      pinBase.current = { shot: r, scroll: { x: window.scrollX, y: window.scrollY }, viewportWidth: window.innerWidth };
+      await redrawPins(next);
     } catch (e) {
       if (signal.aborted) return;
-      fail(e);
+      message.warning(e.message || 'Screenshot failed.');
+      noteError('pin-notes', e);
     } finally {
-      // With the dialog: after an in-time screenshot, so the page is captured
-      // with the rect it was picked at. A late one has had PICK_SHOT_WAIT_MS to
-      // take its copy of the page, and the open dialog should not scroll it.
       restoreLocks?.();
-      if (!late && pickAbort.current === ctrl) pickAbort.current = null;
+      if (pickAbort.current === ctrl) pickAbort.current = null;
       refocusPick.current = !signal.aborted;
       setCapturing(false);
       setHidden(false);
     }
-    if (!late) return;
-    const { shot: next, error } = await late;
-    const current = pickAbort.current === ctrl && !signal.aborted;
-    if (pickAbort.current === ctrl) pickAbort.current = null;
-    if (!current) return;
-    if (error) fail(error);
-    else if (next) applyShot(next);
+  };
+  const removePin = (p) => {
+    const next = pins.filter((x) => x !== p);
+    setPins(next);
+    redrawPins(next).catch((e) => noteError('pin-notes', e));
   };
   useEffect(() => { if (!open) pickAbort.current?.abort(); }, [open]);
   useEffect(() => () => pickAbort.current?.abort(), []);
@@ -363,7 +360,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
 
   const context = useMemo(() => (open ? { ...meta(), ...snapshotContext() } : null), [open, done]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const canSubmit = summary.trim().length > 0 && !submitting;
+  const canSubmit = (summary.trim().length > 0 || pins.length > 0) && !submitting;
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -374,7 +371,7 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
     try {
       const ctx = { ...meta(), ...snapshotContext() };
       const created = await transport.submitFeedback(feedbackPayload({
-        kind, severity, summary, expected, steps, voice, picked,
+        kind, severity, summary, expected, steps, voice, picked, pins,
         context: ctx,
         pageUrl: window.location.href,
         route: window.location.pathname,
@@ -484,17 +481,22 @@ export default function FeedbackModal({ open, onClose, prefill, onOpenTicket, hi
 
   const offer = pickOffer({ shot, picked, capturing, hidden });
   const pickButton = (
-    <Button ref={pickRef} size="small" icon={<AimOutlined />} onClick={pickElement} disabled={offer.disabled}>
-      {offer.label}
-    </Button>
-  );
-  const pickedChip = offer.chip && (
-    <Tooltip title={picked.description.selector}>
-      <span className="kf-file kf-pick-chip">
-        <span className="kf-pick-name">{chipLabel(picked.description)}</span>
-        <button type="button" onClick={() => { endPendingPick(); setPicked(null); }} aria-label="Remove picked element"><CloseOutlined /></button>
-      </span>
+    <Tooltip title="Click anywhere on the page and type a note there">
+      <Button ref={pickRef} size="small" type={pins.length ? 'default' : 'primary'} icon={<AimOutlined />} onClick={pinNotes} disabled={offer.disabled}>
+        {pins.length ? 'Add more notes' : 'Point and comment'}
+      </Button>
     </Tooltip>
+  );
+  const pickedChip = pins.length > 0 && (
+    <ol className="kf-pin-list" aria-label="Pinned notes">
+      {pins.map((p) => (
+        <li key={p.n}>
+          <span className="kf-pin-n">{p.n}</span>
+          <span className="kf-pin-text"><span className="kf-pin-on">{elementName(p.element)}</span>{p.note}</span>
+          <button type="button" onClick={() => removePin(p)} aria-label={`Remove note ${p.n}`}><CloseOutlined /></button>
+        </li>
+      ))}
+    </ol>
   );
 
   const form = done ? (

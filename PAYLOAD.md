@@ -1,10 +1,12 @@
-# Report payload contract — v1.2
+# Report payload contract — v1.3
 
 Contract version **1** ships with package major **1.x**. A change that removes, renames or retypes a field is a new contract version and a new package major; adding an optional field is not.
 
 **1.1** (package 1.1.0) is additive: a new `kind`, `'report-tool'`, and a new `context.diagnostics` object that is present only on that kind. See [Report-tool reports](#report-tool-reports-11). The payload carries no `schemaVersion` field; `context.diagnostics.widgetVersion` tells you which widget sent a report-tool report. The transport interface is unchanged.
 
 **1.2** is additive: an optional `context.element`, the page element the reporter picked with "Pick an element" in the Screenshot card, or `null`. See [Picked element](#picked-element-12). The transport interface is unchanged.
+
+**1.3** is additive: an optional `context.pins`, the notes the reporter pinned with "Point and comment". "Point and comment" replaces "Pick an element"; `context.element` is now the first pin's element, or `null`. See [Pinned notes](#pinned-notes-13). The transport interface is unchanged.
 
 The widget hands every transport the same object, `transport.submitFeedback(payload)`:
 
@@ -54,6 +56,22 @@ The widget hands every transport the same object, `transport.submitFeedback(payl
 | `html` | `string` | `outerHTML`, at most 2 000 chars |
 
 What the reporter typed is never included: `value`, `selected` and `checked` on input, textarea, select and option are dropped, textarea contents are emptied, and so is any attribute whose name looks like a token, password, secret, API key, auth, session, CSRF or cookie.
+
+## Pinned notes (1.3)
+
+"Point and comment" hides the dialog. The reporter clicks or taps anywhere on the page, a numbered pin drops there and a note box opens beside it (Enter pins the note, Esc skips it). They can pin as many notes as they like; Esc or the banner's Done ends it. Clicks are swallowed as with the element pick, so links do not navigate. The quick screenshot is then retaken with the numbered pins drawn on it (`screenshot-annotated.png`). Removing a note in the dialog redraws the screenshot without it.
+
+Every pin is also written into `summary`, so servers that only show text still show them: the reporter's own words, a blank line, `Pinned notes:` and one line per pin (`1. On button “Save”: the note`). With no words of their own, the summary is just those lines, and Send is enabled with pins alone.
+
+`context.pins` (left out when there are none):
+
+| field | type | notes |
+|---|---|---|
+| `n` | `number` | the pin's number, as drawn |
+| `note` | `string` | at most 2 000 chars |
+| `point` | `{ x, y }` | where the click landed, viewport CSS px |
+| `scroll` | `{ x, y }` | window scroll at that moment |
+| `element` | object | what was under the click, as `context.element` |
 
 ## Report-tool reports (1.1)
 

@@ -310,6 +310,7 @@ export function suspendScrollLocks(keys, doc = document) {
  */
 export function startElementPick({
   onHover, signal, doc = document, win = window, getRect = (e) => e.getBoundingClientRect(),
+  hint: hintText = null, cancelText = 'Cancel',
 } = {}) {
   return new Promise((resolve) => {
     const make = (tag, className) => {
@@ -325,10 +326,10 @@ export function startElementPick({
     banner.setAttribute('aria-live', 'polite');
     const hint = make('span', 'kf-picker-hint');
     const touch = Boolean(win.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches);
-    hint.textContent = touch ? 'Tap an element to attach it' : 'Click an element to attach it · Esc to cancel';
+    hint.textContent = hintText || (touch ? 'Tap an element to attach it' : 'Click an element to attach it · Esc to cancel');
     const cancel = make('button', 'kf-picker-cancel');
     cancel.type = 'button';
-    cancel.textContent = 'Cancel';
+    cancel.textContent = cancelText;
     banner.appendChild(hint);
     banner.appendChild(cancel);
     // Events inside a frame never reach this window: let presses fall through
@@ -396,7 +397,8 @@ export function startElementPick({
       swallow(e);
       if (isWithin(e.target, cancel)) { finish(null); return; }
       const el = targetOf(e);
-      if (el) finish({ element: el, description: describeElement(el, { getRect }) });
+      // point: where the click landed (viewport px), for pins.
+      if (el) finish({ element: el, description: describeElement(el, { getRect }), point: { x: Math.round(e.clientX), y: Math.round(e.clientY) } });
     };
     const onKey = (e) => {
       if (e.key !== 'Escape' && e.key !== 'Esc') return;
