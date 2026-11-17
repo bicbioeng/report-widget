@@ -349,3 +349,38 @@
   .kids-feedback-fab, .kf-root .ant-modal-content, .kf-body > *, .kf-shot, .kf-file, .kf-success, .kf-report, .kids-feedback-pill, .kf-picker, .kf-picker-banner { animation: none !important; }
   .kf-chip, .kf-card, .kf-tool, .kf-report, .fi-stat, .kf-root .ant-btn, .kf-shot img { transition: none !important; transform: none !important; }
 }
+
+/* Click-to-comment pins (pins.js). Dots and the note box are .kf-root, so never in a screenshot;
+   drawPins paints the pins onto it. Dots sit in page coordinates under the picker layer (1190). */
+.kf-pin-layer { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 1185; pointer-events: none; }
+.kf-pin-dot {
+  position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 50%; box-sizing: border-box;
+  display: grid; place-items: center; background: var(--kf-accent, #6B63D9); color: #fff; border: 2px solid #fff;
+  font: 700 12px/1 var(--kf-font, system-ui, sans-serif); box-shadow: 0 2px 8px rgba(20, 20, 43, .3);
+}
+.kf-note-layer { position: fixed; inset: 0; z-index: 1195; }
+.kf-note {
+  position: fixed; box-sizing: border-box; padding: 10px; border-radius: 12px; background: #fff; color: #14142B;
+  border: 1px solid rgba(20, 20, 43, .12); box-shadow: 0 12px 32px rgba(20, 20, 43, .25); font: 13px/1.4 var(--kf-font, system-ui, sans-serif);
+}
+.kf-note-head { font-weight: 600; margin: 0 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kf-note textarea {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 64px; padding: 6px 8px; border-radius: 8px;
+  border: 1px solid rgba(20, 20, 43, .2); font: 13px/1.4 var(--kf-font, system-ui, sans-serif); color: inherit;
+}
+.kf-note textarea:focus { outline: 2px solid var(--kf-accent, #6B63D9); outline-offset: 0; border-color: transparent; }
+.kf-note-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.kf-note-row span { flex: 1; font-size: 11.5px; color: #5A5A72; }
+.kf-note-row button { cursor: pointer; padding: 4px 12px; border-radius: 999px; font: 500 12.5px var(--kf-font, system-ui, sans-serif); }
+.kf-note-skip { border: 1px solid rgba(20, 20, 43, .2); background: #fff; color: #14142B; }
+.kf-note-save { border: 1px solid var(--kf-accent, #6B63D9); background: var(--kf-accent, #6B63D9); color: #fff; }
+.kf-note-row button:focus-visible { outline: 2px solid var(--kf-accent, #6B63D9); outline-offset: 2px; }
+.kf-pin-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; width: 100%; }
+.kf-pin-list li { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; line-height: 1.4; }
+.kf-pin-n {
+  flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--kf-accent, #6B63D9); color: #fff; font-weight: 700; font-size: 11px;
+}
+.kf-pin-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.kf-pin-on { display: block; color: #5A5A72; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kf-pin-list button { flex: none; border: 0; background: none; cursor: pointer; color: #5A5A72; padding: 2px; }

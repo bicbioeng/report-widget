@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.16.0
+
+Additive. Payload contract 1.3; the transport interface is unchanged.
+
+- **Point and comment** replaces "Pick an element". The reporter clicks anywhere on the page and types a note at each spot, as many as they like; numbered pins are drawn on the screenshot and listed in the dialog, where each can be removed. Notes go into `summary` as a "Pinned notes" list and into `context.pins`; `context.element` is the first pin's element. Send works with pinned notes alone. See PAYLOAD.md.
+- `startElementPick` takes optional `hint` and `cancelText`, and resolves `point` (the click, viewport px).
+- New module `src/pins.js` (`pinSession`, `askNote`, `drawPins`, `pinMarks`, `pinsText`, `pinSummary`, `pinPayload`).
+
 ## Unreleased
 
 Additive; the six required transport functions are unchanged.

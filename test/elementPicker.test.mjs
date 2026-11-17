@@ -395,7 +395,8 @@ test('the dialog ends a pending pick screenshot on every other change to the scr
     assert.ok(i >= 0, start);
     assert.match(jsx.slice(i, i + len), /endPendingPick\(\)/, start);
   }
-  for (const mark of ['aria-label="Remove picked element"', '<Tooltip title="Remove">']) {
+  // Pins replaced the single-pick chip; removing a pin redraws, it has no pending screenshot to end.
+  for (const mark of ['<Tooltip title="Remove">']) {
     const line = jsx.split('\n').find((l) => l.includes(mark));
     assert.ok(line, mark);
     assert.match(line, /endPendingPick\(\)/, mark);
